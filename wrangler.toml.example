@@ -1,0 +1,76 @@
+# ================================================
+# ActionQ - Configuración de Cloudflare Workers
+# ================================================
+# 
+# INSTRUCCIONES:
+# 1. Copia este archivo: cp wrangler.toml.example wrangler.toml
+# 2. Crea tu base de datos D1: npx wrangler d1 create actionq-db
+# 3. Copia el database_id generado y reemplaza "YOUR-D1-DATABASE-ID" abajo
+# 4. ¡Listo! Puedes ejecutar: npm run dev
+#
+# ================================================
+
+# Nombre de tu Worker (aparecerá en el dashboard de Cloudflare)
+name = "actionq"
+
+# Punto de entrada principal
+main = "src/index.tsx"
+
+# Fecha de compatibilidad - determina qué APIs están disponibles
+# Más info: https://developers.cloudflare.com/workers/configuration/compatibility-dates/
+compatibility_date = "2024-12-01"
+
+# ================================================
+# BASE DE DATOS D1
+# ================================================
+# 
+# Para crear tu base de datos ejecuta:
+#   npx wrangler d1 create actionq-db
+#
+# El comando te dará un output como:
+#   [[d1_databases]]
+#   binding = "DB"
+#   database_name = "actionq-db"
+#   database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+#
+# Copia el database_id y pégalo abajo:
+#
+[[d1_databases]]
+binding = "DB"
+database_name = "actionq-db"
+database_id = "YOUR-D1-DATABASE-ID"
+
+# ================================================
+# VARIABLES DE ENTORNO (No sensibles)
+# ================================================
+# 
+# Puedes definir variables no sensibles aquí.
+# Para SECRETOS (APP_SECRET, etc.) usa:
+#   npx wrangler secret put APP_SECRET
+#
+[vars]
+APP_NAME = "ActionQ"
+APP_VERSION = "1.0.0"
+
+# ================================================
+# CONFIGURACIÓN DE DESARROLLO LOCAL
+# ================================================
+#
+# Para usar una DB local durante desarrollo:
+# [env.dev]
+# [[env.dev.d1_databases]]
+# binding = "DB"
+# database_name = "actionq-db-dev"
+# database_id = "local"
+
+# ================================================
+# CONFIGURACIÓN DE PRODUCCIÓN (opcional)
+# ================================================
+# 
+# Puedes tener configuraciones separadas por entorno:
+# [env.production]
+# name = "actionq-prod"
+# [[env.production.d1_databases]]
+# binding = "DB"
+# database_name = "actionq-db-prod"
+# database_id = "YOUR-PRODUCTION-D1-DATABASE-ID"

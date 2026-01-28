@@ -1,0 +1,38 @@
+# ================================================
+# ActionQ - Archivos ignorados
+# ================================================
+
+# Configuración local (usar archivos .example como plantilla)
+wrangler.toml
+.dev.vars
+
+# Dependencias
+node_modules/
+
+# Cloudflare Wrangler
+.wrangler/
+
+# TypeScript
+*.tsbuildinfo
+
+# Build outputs
+dist/
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files (excepto .example)
+.env
+.env.local
+.env.*.local

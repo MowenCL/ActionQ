@@ -1,0 +1,51 @@
+# ================================================
+# ActionQ - Variables de Desarrollo Local
+# ================================================
+#
+# INSTRUCCIONES:
+# 1. Copia este archivo: cp .dev.vars.example .dev.vars
+# 2. Genera valores seguros para los secretos
+# 3. El archivo .dev.vars está en .gitignore (no se sube a git)
+#
+# Estas variables solo aplican en desarrollo local (wrangler dev)
+# Para producción, usa: npx wrangler secret put <NOMBRE_VARIABLE>
+#
+# ================================================
+
+# ================================================
+# APP_SECRET (REQUERIDO)
+# ================================================
+# Clave secreta para firmar cookies y tokens de sesión.
+# IMPORTANTE: Usa un valor único y seguro de al menos 32 caracteres.
+#
+# Puedes generar uno con:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+# o:
+#   openssl rand -hex 32
+#
+APP_SECRET=genera-una-clave-secreta-de-al-menos-32-caracteres-aqui
+
+# ================================================
+# ADMIN_INIT_EMAIL (REQUERIDO para primer arranque)
+# ================================================
+# Email del primer administrador del sistema.
+# Se usa durante la instalación inicial (first-run) para crear
+# el Super Admin. Después de la instalación, puedes cambiar o
+# eliminar esta variable.
+#
+ADMIN_INIT_EMAIL=admin@tudominio.com
+
+# ================================================
+# ADMIN_INIT_PASSWORD (REQUERIDO para primer arranque)
+# ================================================
+# Contraseña temporal para el primer administrador.
+# IMPORTANTE: Cámbiala inmediatamente después del primer login.
+#
+ADMIN_INIT_PASSWORD=CambiaEstaPalabraSegura123!
+
+# ================================================
+# Variables opcionales para desarrollo
+# ================================================
+#
+# LOG_LEVEL=debug
+# ENABLE_CORS=true
