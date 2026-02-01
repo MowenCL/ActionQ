@@ -113,7 +113,35 @@ cd ActionQ
 npm install
 ```
 
-### Paso 3: Configurar Wrangler
+### Paso 3: Configurar el Proyecto
+
+El archivo `wrangler.toml` **NO está incluido en el repositorio** por seguridad (contiene IDs personales). Debes crearlo tú mismo.
+
+**📖 Ver instrucciones detalladas**: [SETUP.md](./SETUP.md)
+
+En resumen:
+
+```bash
+# Copiar la plantilla
+cp wrangler.toml.example wrangler.toml
+
+# Crear base de datos D1
+npx wrangler d1 create actionq-db
+
+# Crear namespace KV para OTP
+npx wrangler kv:namespace create OTP_STORE
+
+# Editar wrangler.toml con tus IDs
+nano wrangler.toml  # o usa tu editor favorito
+```
+
+### Paso 4: Instalar Dependencias
+
+```bash
+npm install
+```
+
+### Paso 5: Configurar Wrangler
 
 Copia el archivo de ejemplo y edítalo:
 
