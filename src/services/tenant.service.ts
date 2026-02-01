@@ -174,7 +174,7 @@ export async function toggleTenantActive(
     .run();
   
   const tenant = await getTenantById(db, tenantId);
-  return tenant?.is_active === 1;
+  return Boolean(tenant?.is_active);
 }
 
 /**

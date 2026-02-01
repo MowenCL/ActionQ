@@ -161,7 +161,7 @@ export async function toggleUserActive(
     .run();
   
   const user = await getUserById(db, userId);
-  return user?.is_active === 1;
+  return Boolean(user?.is_active);
 }
 
 /**

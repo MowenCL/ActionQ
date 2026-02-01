@@ -1,0 +1,1597 @@
+/**
+ * ActionQ - Rutas de Administración
+ * 
+ * Maneja el panel de admin, usuarios, tenants y configuración.
+ */
+
+import { Hono } from 'hono';
+import type { AppEnv, Tenant, User } from '../types';
+import { Layout } from '../views/Layout';
+import { 
+  requireAuth,
+  requireAdmin,
+  requireAgentManager,
+  requireSuperAdmin,
+  hashPassword,
+  generateSalt
+} from '../middleware/auth';
+import { formatDate } from '../utils';
+import { 
+  TIMEZONES,
+  SESSION_TIMEOUT_OPTIONS 
+} from '../config/constants';
+import { 
+  getSystemConfig, 
+  setTimezone, 
+  setSessionTimeout 
+} from '../services/config.service';
+
+const adminRoutes = new Hono<AppEnv>();
+
+
+// ================================================
+// RUTAS DE ADMINISTRACIÓN
+// ================================================
+
+/**
+ * GET /admin - Panel de administración
+ */
+adminRoutes.get('/admin', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  const db = c.env.DB;
+  
+  // Para org_admin: mostrar solo usuarios de su organización
+  if (user.role === 'org_admin') {
+    // Obtener nombre de la organización
+    const tenant = await db.prepare('SELECT name FROM tenants WHERE id = ?')
+      .bind(user.tenant_id)
+      .first<{ name: string }>();
+    const tenantName = tenant?.name || 'Mi Organización';
+    
+    // Obtener usuarios de su organización
+    const usersResult = await db.prepare('SELECT id, name, email, role, is_active FROM users WHERE tenant_id = ? ORDER BY name')
+      .bind(user.tenant_id)
+      .all<{ id: number; name: string; email: string; role: string; is_active: number }>();
+    const orgUsers = usersResult.results || [];
+    
+    return c.html(
+      <Layout title="Administración" user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
+        <div class="space-y-6">
+          <h1 class="text-2xl font-bold text-gray-900">Panel de Administración</h1>
+          
+          {/* Estadísticas */}
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="bg-white rounded-lg shadow p-6">
+              <div class="flex items-center justify-between">
+                <span class="text-2xl">👥</span>
+                <span class="text-3xl font-bold text-gray-900">{orgUsers.length}</span>
+              </div>
+              <p class="mt-2 text-sm font-medium text-gray-600">Usuarios de {tenantName}</p>
+            </div>
+          </div>
+          
+          {/* Lista de usuarios de la organización */}
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+              <h2 class="text-lg font-semibold text-gray-900">Usuarios de {tenantName}</h2>
+            </div>
+            
+            {orgUsers.length > 0 ? (
+              <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                  <thead class="bg-gray-50">
+                    <tr>
+                      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nombre</th>
+                      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rol</th>
+                      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody class="bg-white divide-y divide-gray-200">
+                    {orgUsers.map((u) => (
+                      <tr key={u.id} class="hover:bg-gray-50">
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{u.name}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{u.email}</td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                          <span class={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            u.role === 'org_admin' ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {u.role === 'org_admin' ? 'Admin. Org.' : 'Usuario'}
+                          </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                          <span class={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                            u.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                          }`}>
+                            {u.is_active ? 'Activo' : 'Inactivo'}
+                          </span>
+                        </td>
+                        <td class="px-6 py-4 whitespace-nowrap">
+                          {u.id !== user.id ? (
+                            <form method="post" action={`/admin/tenants/${user.tenant_id}/users/${u.id}/toggle`}>
+                              <button 
+                                type="submit" 
+                                class={`text-sm font-medium ${
+                                  u.is_active 
+                                    ? 'text-red-600 hover:text-red-800' 
+                                    : 'text-green-600 hover:text-green-800'
+                                }`}
+                              >
+                                {u.is_active ? 'Desactivar' : 'Activar'}
+                              </button>
+                            </form>
+                          ) : (
+                            <span class="text-gray-400 text-sm">—</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div class="p-6 text-center text-gray-500">
+                No hay usuarios en esta organización
+              </div>
+            )}
+          </div>
+        </div>
+      </Layout>
+    );
+  }
+  
+  // Para super_admin: mostrar equipo interno y organizaciones
+  // Obtener lista de usuarios del equipo interno (solo super_admin, agent_admin, agent)
+  const usersResult = await db.prepare("SELECT u.*, t.name as tenant_name FROM users u LEFT JOIN tenants t ON u.tenant_id = t.id WHERE u.role IN ('super_admin', 'agent_admin', 'agent') ORDER BY u.created_at DESC").all<User & { tenant_name: string }>();
+  
+  const users = usersResult.results || [];
+  
+  // Obtener lista de tenants (solo super_admin)
+  let tenants: Tenant[] = [];
+  if (user.role === 'super_admin') {
+    const tenantsResult = await db.prepare('SELECT * FROM tenants ORDER BY created_at DESC').all<Tenant>();
+    tenants = tenantsResult.results || [];
+  }
+  
+  return c.html(
+    <Layout title="Administración" user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
+      <div class="space-y-6">
+        <h1 class="text-2xl font-bold text-gray-900">Panel de Administración</h1>
+        
+        {/* Acciones rápidas */}
+        <div class="flex flex-wrap gap-3">
+          <a 
+            href="/admin/users/new" 
+            class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
+          >
+            👤 Nuevo Usuario
+          </a>
+          {user.role === 'super_admin' && (
+            <a 
+              href="/admin/tenants/new" 
+              class="inline-flex items-center px-4 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700"
+            >
+              🏢 Nueva Organización
+            </a>
+          )}
+          {user.role === 'super_admin' && (
+            <a 
+              href="/admin/tenants" 
+              class="inline-flex items-center px-4 py-2 bg-green-600 text-white font-medium rounded-lg hover:bg-green-700"
+            >
+              🏢 Gestionar Organizaciones
+            </a>
+          )}
+          {user.role === 'super_admin' && (
+            <a 
+              href="/admin/settings" 
+              class="inline-flex items-center px-4 py-2 bg-gray-600 text-white font-medium rounded-lg hover:bg-gray-700"
+            >
+              ⚙️ Configuración del Sistema
+            </a>
+          )}
+        </div>
+        
+        {/* Estadísticas rápidas */}
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center justify-between">
+              <span class="text-2xl">👥</span>
+              <span class="text-3xl font-bold text-gray-900">{users.length}</span>
+            </div>
+            <p class="mt-2 text-sm font-medium text-gray-600">Equipo Interno</p>
+          </div>
+          {user.role === 'super_admin' && (
+            <div class="bg-white rounded-lg shadow p-6">
+              <div class="flex items-center justify-between">
+                <span class="text-2xl">🏢</span>
+                <span class="text-3xl font-bold text-gray-900">{tenants.length}</span>
+              </div>
+              <p class="mt-2 text-sm font-medium text-gray-600">Organizaciones</p>
+            </div>
+          )}
+        </div>
+        
+        {/* Lista de usuarios del equipo interno */}
+        <div class="bg-white rounded-lg shadow">
+          <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+            <h2 class="text-lg font-semibold text-gray-900">Equipo Interno</h2>
+            <a href="/admin/users/new" class="text-sm text-blue-600 hover:text-blue-700 font-medium">
+              + Nuevo Usuario
+            </a>
+          </div>
+          
+          <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nombre</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rol</th>
+                  {user.role === 'super_admin' && (
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Organización</th>
+                  )}
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                  {user.role === 'super_admin' && (
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                  )}
+                </tr>
+              </thead>
+              <tbody class="bg-white divide-y divide-gray-200">
+                {users.map((u) => (
+                  <tr key={u.id} class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{u.name}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{u.email}</td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <span class={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                        u.role === 'super_admin' ? 'bg-purple-100 text-purple-800' :
+                        u.role === 'org_admin' ? 'bg-blue-100 text-blue-800' :
+                        u.role === 'agent_admin' ? 'bg-indigo-100 text-indigo-800' :
+                        u.role === 'agent' ? 'bg-green-100 text-green-800' :
+                        'bg-gray-100 text-gray-800'
+                      }`}>
+                        {u.role === 'agent_admin' ? 'Admin. Agentes' : 
+                         u.role === 'org_admin' ? 'Admin. Org.' : u.role}
+                      </span>
+                    </td>
+                    {user.role === 'super_admin' && (
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {u.tenant_name || '—'}
+                      </td>
+                    )}
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <span class={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                        u.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                      }`}>
+                        {u.is_active ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </td>
+                    {user.role === 'super_admin' && (
+                      <td class="px-6 py-4 whitespace-nowrap">
+                        {u.id !== user.id ? (
+                          <form method="post" action={`/admin/users/${u.id}/delete`} 
+                            onsubmit="return confirm('¿Estás seguro de eliminar este usuario? Esta acción no se puede deshacer.')">
+                            <button type="submit" class="text-red-600 hover:text-red-800 text-sm font-medium">
+                              Eliminar
+                            </button>
+                          </form>
+                        ) : (
+                          <span class="text-gray-400 text-sm">-</span>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        
+        {/* Lista de organizaciones (solo super_admin) */}
+        {user.role === 'super_admin' && (
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+              <h2 class="text-lg font-semibold text-gray-900">Organizaciones</h2>
+              <a href="/admin/tenants/new" class="text-sm text-purple-600 hover:text-purple-700 font-medium">
+                + Nueva Organización
+              </a>
+            </div>
+            
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nombre</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Dominio</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Creado</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                  {tenants.map((t) => (
+                    <tr key={t.id} class="hover:bg-gray-50">
+                      <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{t.name}</td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{t.slug}</td>
+                      <td class="px-6 py-4 whitespace-nowrap">
+                        <span class={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                          t.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {t.is_active ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {formatDate(t.created_at, c.get('timezone'), { dateOnly: true })}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </Layout>
+  );
+});
+
+/**
+ * GET /admin/users/new - Formulario para crear usuario
+ */
+adminRoutes.get('/admin/users/new', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  const db = c.env.DB;
+  
+  // Obtener tenants para el select (solo super_admin puede elegir)
+  let tenants: Tenant[] = [];
+  if (user.role === 'super_admin') {
+    const tenantsResult = await db.prepare('SELECT * FROM tenants ORDER BY name').all<Tenant>();
+    tenants = tenantsResult.results || [];
+  }
+  
+  return c.html(
+    <Layout title="Nuevo Usuario" user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
+      <div class="max-w-2xl mx-auto">
+        <h1 class="text-2xl font-bold text-gray-900 mb-6">Crear Nuevo Usuario</h1>
+        
+        <form method="post" action="/admin/users" class="bg-white rounded-lg shadow p-6 space-y-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Nombre</label>
+            <input 
+              type="text" 
+              name="name" 
+              required
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Email</label>
+            <input 
+              type="email" 
+              name="email" 
+              required
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Contraseña</label>
+            <input 
+              type="password" 
+              name="password" 
+              required
+              minLength={8}
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">Rol</label>
+            <select 
+              name="role" 
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="user">Usuario</option>
+              {user.role === 'super_admin' && (
+                <>
+                  <option value="agent">Agente</option>
+                  <option value="agent_admin">Administrador de Agentes</option>
+                </>
+              )}
+              <option value="org_admin">Administrador de Organización</option>
+              {user.role === 'super_admin' && (
+                <option value="super_admin">Super Admin</option>
+              )}
+            </select>
+          </div>
+          
+          {user.role === 'super_admin' && tenants.length > 0 && (
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">Organización</label>
+              <select 
+                name="tenant_id" 
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                {tenants.map((t) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          
+          <div class="flex justify-end space-x-3">
+            <a href="/admin" class="px-4 py-2 text-gray-700 hover:text-gray-900">Cancelar</a>
+            <button 
+              type="submit"
+              class="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
+            >
+              Crear Usuario
+            </button>
+          </div>
+        </form>
+      </div>
+    </Layout>
+  );
+});
+
+/**
+ * POST /admin/users - Crear usuario
+ */
+adminRoutes.post('/admin/users', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  
+  try {
+    const formData = await c.req.formData();
+    const name = formData.get('name') as string;
+    const email = formData.get('email') as string;
+    const password = formData.get('password') as string;
+    const role = formData.get('role') as string;
+    const tenantId = user.role === 'super_admin' 
+      ? formData.get('tenant_id') as string 
+      : user.tenant_id?.toString();
+    
+    if (!name || !email || !password) {
+      return c.text('Todos los campos son requeridos', 400);
+    }
+    
+    // Generar hash de contraseña
+    const salt = generateSalt();
+    const passwordHash = await hashPassword(password, salt);
+    const storedHash = `${salt}:${passwordHash}`;
+    
+    await c.env.DB
+      .prepare('INSERT INTO users (tenant_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)')
+      .bind(tenantId ? parseInt(tenantId) : null, email, storedHash, name, role)
+      .run();
+    
+    return c.redirect('/admin');
+    
+  } catch (error) {
+    console.error('Create user error:', error);
+    return c.text('Error al crear usuario', 500);
+  }
+});
+
+/**
+ * POST /admin/users/:id/delete - Eliminar usuario (solo super_admin)
+ */
+adminRoutes.post('/admin/users/:id/delete', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  const userId = parseInt(c.req.param('id'));
+  
+  // Solo super_admin puede eliminar usuarios
+  if (user.role !== 'super_admin') {
+    return c.text('No autorizado', 403);
+  }
+  
+  // No permitir eliminarse a sí mismo
+  if (userId === user.id) {
+    return c.text('No puedes eliminarte a ti mismo', 400);
+  }
+  
+  try {
+    // Verificar si el usuario tiene tickets creados
+    const ticketCount = await c.env.DB
+      .prepare('SELECT COUNT(*) as count FROM tickets WHERE created_by = ?')
+      .bind(userId)
+      .first<{ count: number }>();
+    
+    if (ticketCount && ticketCount.count > 0) {
+      return c.text(`No se puede eliminar el usuario porque tiene ${ticketCount.count} ticket(s) asociado(s). Desactívalo en su lugar.`, 400);
+    }
+    
+    // Quitar asignaciones de tickets
+    await c.env.DB
+      .prepare('UPDATE tickets SET assigned_to = NULL WHERE assigned_to = ?')
+      .bind(userId)
+      .run();
+    
+    // Eliminar mensajes del usuario
+    await c.env.DB
+      .prepare('DELETE FROM messages WHERE user_id = ?')
+      .bind(userId)
+      .run();
+    
+    // Eliminar el usuario
+    await c.env.DB
+      .prepare('DELETE FROM users WHERE id = ?')
+      .bind(userId)
+      .run();
+    
+    return c.redirect('/admin');
+    
+  } catch (error) {
+    console.error('Delete user error:', error);
+    return c.text('Error al eliminar usuario', 500);
+  }
+});
+
+// ================================================
+// RUTAS DE GESTIÓN DE ORGANIZACIONES
+// ================================================
+
+/**
+ * GET /admin/tenants/new - Formulario para crear organización
+ */
+adminRoutes.get('/admin/tenants/new', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  
+  // Solo super_admin puede crear organizaciones
+  if (user.role !== 'super_admin') {
+    return c.redirect('/admin');
+  }
+  
+  return c.html(
+    <Layout title="Nueva Organización" user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
+      <div class="max-w-lg mx-auto">
+        <div class="mb-6">
+          <a href="/admin" class="text-blue-600 hover:text-blue-700 text-sm">
+            ← Volver a Administración
+          </a>
+        </div>
+        
+        <div class="bg-white rounded-lg shadow p-6">
+          <h1 class="text-xl font-bold text-gray-900 mb-6">Nueva Organización</h1>
+          
+          <form method="post" action="/admin/tenants" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Nombre de la Organización *
+              </label>
+              <input 
+                type="text" 
+                name="name" 
+                required
+                placeholder="Ej: Maderas Nativas SpA"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">
+                Nombre comercial o razón social de la empresa
+              </p>
+            </div>
+            
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Dominio de Email *
+              </label>
+              <input 
+                type="text" 
+                name="domain" 
+                required
+                placeholder="Ej: maderas.cl"
+                pattern="^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500"
+              />
+              <p class="mt-1 text-xs text-gray-500">
+                Los usuarios con emails de este dominio podrán registrarse en esta organización
+              </p>
+            </div>
+            
+            <div class="flex justify-end space-x-3 pt-4">
+              <a href="/admin" class="px-4 py-2 text-gray-700 hover:text-gray-900">
+                Cancelar
+              </a>
+              <button 
+                type="submit"
+                class="px-6 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700"
+              >
+                Crear Organización
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </Layout>
+  );
+});
+
+/**
+ * POST /admin/tenants - Crear organización
+ */
+adminRoutes.post('/admin/tenants', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  
+  // Solo super_admin puede crear organizaciones
+  if (user.role !== 'super_admin') {
+    return c.text('No autorizado', 403);
+  }
+  
+  try {
+    const formData = await c.req.formData();
+    const name = (formData.get('name') as string)?.trim();
+    const domain = (formData.get('domain') as string)?.toLowerCase().trim();
+    
+    if (!name || !domain) {
+      return c.text('Nombre y dominio son requeridos', 400);
+    }
+    
+    // Verificar que el dominio no exista ya
+    const existing = await c.env.DB
+      .prepare('SELECT id FROM tenants WHERE slug = ?')
+      .bind(domain)
+      .first();
+    
+    if (existing) {
+      return c.html(
+        <Layout title="Error" user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
+          <div class="max-w-lg mx-auto">
+            <div class="bg-red-50 border border-red-200 rounded-lg p-6">
+              <h2 class="text-lg font-semibold text-red-800 mb-2">Error</h2>
+              <p class="text-red-700 mb-4">
+                Ya existe una organización con el dominio "{domain}".
+              </p>
+              <a href="/admin/tenants/new" class="text-red-600 hover:text-red-700 font-medium">
+                ← Volver al formulario
+              </a>
+            </div>
+          </div>
+        </Layout>
+      );
+    }
+    
+    // Crear organización con el dominio como allowed_domains
+    await c.env.DB
+      .prepare('INSERT INTO tenants (name, slug, allowed_domains) VALUES (?, ?, ?)')
+      .bind(name, domain, JSON.stringify([domain]))
+      .run();
+    
+    return c.redirect('/admin');
+    
+  } catch (error) {
+    console.error('Create tenant error:', error);
+    return c.text('Error al crear organización', 500);
+  }
+});
+
+// ================================================
+// API ENDPOINTS
+// ================================================
+
+/**
+ * GET /api/tenants/:id/users - Obtener usuarios de una organización
+ * Solo accesible por equipo interno (super_admin, agent_admin, agent)
+ */
+adminRoutes.get('/api/tenants/:id/users', requireAuth, async (c) => {
+  const user = c.get('user')!;
+  
+  // Solo equipo interno puede acceder a usuarios de cualquier organización
+  if (!['super_admin', 'agent_admin', 'agent'].includes(user.role)) {
+    return c.json({ error: 'No autorizado' }, 403);
+  }
+  
+  const tenantId = parseInt(c.req.param('id'));
+  
+  const result = await c.env.DB
+    .prepare('SELECT id, name, email FROM users WHERE tenant_id = ? AND is_active = 1 ORDER BY name')
+    .bind(tenantId)
+    .all<{ id: number; name: string; email: string }>();
+  
+  return c.json(result.results || []);
+});
+
+// ================================================
+// RUTAS DE GESTIÓN DE ORGANIZACIONES
+// ================================================
+
+/**
+ * GET /admin/tenants - Lista de organizaciones
+ * Solo super_admin puede acceder
+ */
+adminRoutes.get('/admin/tenants', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  const db = c.env.DB;
+  
+  // Solo super_admin puede ver esta página
+  if (user.role !== 'super_admin') {
+    return c.redirect('/admin');
+  }
+  
+  // Obtener todas las organizaciones
+  let tenants: (Tenant & { domains: string[], userCount: number })[] = [];
+  
+  const result = await db.prepare(`
+    SELECT t.*, 
+           (SELECT COUNT(*) FROM users WHERE tenant_id = t.id) as user_count
+    FROM tenants t 
+    ORDER BY t.name
+  `).all<Tenant & { user_count: number }>();
+  tenants = (result.results || []).map(t => ({
+    ...t,
+    domains: JSON.parse(t.allowed_domains || '[]'),
+    userCount: t.user_count || 0
+  }));
+  
+  return c.html(
+    <Layout title="Organizaciones" user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
+      <div class="space-y-6">
+        <div class="flex justify-between items-center">
+          <div>
+            <h1 class="text-2xl font-bold text-gray-900">Organizaciones</h1>
+            <p class="mt-1 text-sm text-gray-600">
+              Selecciona una organización para gestionar sus dominios y configuración
+            </p>
+          </div>
+          <div class="flex gap-3">
+            {user.role === 'super_admin' && (
+              <a 
+                href="/admin/tenants/new" 
+                class="px-4 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 text-sm"
+              >
+                + Nueva Organización
+              </a>
+            )}
+            <a href="/admin" class="text-blue-600 hover:text-blue-700 text-sm py-2">
+              ← Volver
+            </a>
+          </div>
+        </div>
+        
+        <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {tenants.map((tenant) => (
+            <a 
+              key={tenant.id} 
+              href={`/admin/tenants/${tenant.id}`}
+              class="block bg-white rounded-lg shadow hover:shadow-md transition-shadow"
+            >
+              <div class="p-6">
+                <div class="flex items-start justify-between">
+                  <div>
+                    <h2 class="text-lg font-semibold text-gray-900">{tenant.name}</h2>
+                    <p class="text-sm text-gray-500 mt-1">Dominio: {tenant.slug}</p>
+                  </div>
+                  <span class={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                    tenant.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                  }`}>
+                    {tenant.is_active ? 'Activo' : 'Inactivo'}
+                  </span>
+                </div>
+                
+                <div class="mt-4 flex items-center justify-between text-sm">
+                  <span class="text-gray-600">
+                    <span class="font-medium">{tenant.userCount}</span> usuarios
+                  </span>
+                  <span class="text-gray-600">
+                    <span class="font-medium">{tenant.domains.length}</span> dominios
+                  </span>
+                </div>
+                
+                <div class="mt-3 text-blue-600 text-sm font-medium">
+                  Gestionar →
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+        
+        {tenants.length === 0 && (
+          <div class="text-center py-12 bg-white rounded-lg shadow">
+            <p class="text-gray-500">No hay organizaciones disponibles</p>
+          </div>
+        )}
+      </div>
+    </Layout>
+  );
+});
+
+/**
+ * GET /admin/tenants/:id - Detalle y gestión de una organización
+ */
+adminRoutes.get('/admin/tenants/:id', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  const tenantId = parseInt(c.req.param('id'));
+  
+  // Verificar acceso
+  if (user.role !== 'super_admin' && user.tenant_id !== tenantId) {
+    return c.redirect('/admin/tenants');
+  }
+  
+  const tenant = await c.env.DB
+    .prepare('SELECT * FROM tenants WHERE id = ?')
+    .bind(tenantId)
+    .first<Tenant>();
+  
+  if (!tenant) {
+    return c.redirect('/admin/tenants');
+  }
+  
+  const domains: string[] = JSON.parse(tenant.allowed_domains || '[]');
+  
+  // Obtener usuarios de esta organización
+  const usersResult = await c.env.DB
+    .prepare('SELECT id, name, email, role, is_active FROM users WHERE tenant_id = ? ORDER BY name')
+    .bind(tenantId)
+    .all<{ id: number; name: string; email: string; role: string; is_active: number }>();
+  const users = usersResult.results || [];
+  
+  return c.html(
+    <Layout title={tenant.name} user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
+      <div class="space-y-6">
+        <div class="flex justify-between items-center">
+          <div class="flex items-center gap-3">
+            <div>
+              <h1 class="text-2xl font-bold text-gray-900">{tenant.name}</h1>
+              <p class="mt-1 text-sm text-gray-600">ID: {tenant.slug}</p>
+            </div>
+            <span class={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${
+              tenant.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+            }`}>
+              {tenant.is_active ? 'Activa' : 'Inactiva'}
+            </span>
+          </div>
+          <div class="flex items-center gap-3">
+            <form method="post" action={`/admin/tenants/${tenant.id}/toggle`}>
+              <button 
+                type="submit" 
+                class={`px-4 py-2 text-sm font-medium rounded-lg ${
+                  tenant.is_active 
+                    ? 'bg-red-100 text-red-700 hover:bg-red-200' 
+                    : 'bg-green-100 text-green-700 hover:bg-green-200'
+                }`}
+              >
+                {tenant.is_active ? 'Desactivar Organización' : 'Activar Organización'}
+              </button>
+            </form>
+            <a href="/admin/tenants" class="text-blue-600 hover:text-blue-700 text-sm">
+              ← Volver
+            </a>
+          </div>
+        </div>
+        
+        {!tenant.is_active && (
+          <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p class="text-red-800 text-sm">
+              <strong>Organización inactiva:</strong> Los usuarios de esta organización no pueden iniciar sesión ni registrarse.
+            </p>
+          </div>
+        )}
+        
+        {/* Dominios permitidos */}
+        <div class="bg-white rounded-lg shadow">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Dominios Permitidos</h2>
+            <p class="text-sm text-gray-500">Los usuarios con estos dominios pueden registrarse</p>
+          </div>
+          
+          <div class="p-6">
+            {/* Lista de dominios actuales */}
+            <div class="mb-4">
+              {domains.length > 0 ? (
+                <div class="flex flex-wrap gap-2">
+                  {domains.map((domain) => (
+                    <span class="inline-flex items-center px-3 py-1 rounded-full text-sm bg-blue-100 text-blue-800">
+                      {domain}
+                      <form method="post" action={`/admin/tenants/${tenant.id}/domains/remove`} class="inline ml-2">
+                        <input type="hidden" name="domain" value={domain} />
+                        <button type="submit" class="text-blue-600 hover:text-red-600" title="Eliminar">
+                          ×
+                        </button>
+                      </form>
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p class="text-sm text-gray-500 italic">
+                  No hay dominios configurados. Los usuarios no pueden registrarse en esta organización.
+                </p>
+              )}
+            </div>
+            
+            {/* Formulario para añadir dominio */}
+            <form method="post" action={`/admin/tenants/${tenant.id}/domains/add`} class="flex gap-2">
+              <input 
+                type="text" 
+                name="domain" 
+                required
+                placeholder="ejemplo.com"
+                pattern="^[a-zA-Z0-9][a-zA-Z0-9.-]*\.[a-zA-Z]{2,}$"
+                class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+              <button 
+                type="submit"
+                class="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
+              >
+                Añadir dominio
+              </button>
+            </form>
+          </div>
+        </div>
+        
+        {/* Usuarios de esta organización */}
+        <div class="bg-white rounded-lg shadow">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">Usuarios ({users.length})</h2>
+          </div>
+          
+          {users.length > 0 ? (
+            <div class="overflow-x-auto">
+              <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                  <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nombre</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Rol</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estado</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                  {users.map((u) => (
+                    <tr key={u.id} class="hover:bg-gray-50">
+                      <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{u.name}</td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{u.email}</td>
+                      <td class="px-6 py-4 whitespace-nowrap">
+                        <span class={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                          u.role === 'org_admin' ? 'bg-blue-100 text-blue-800' :
+                          u.role === 'agent_admin' ? 'bg-indigo-100 text-indigo-800' :
+                          u.role === 'agent' ? 'bg-green-100 text-green-800' :
+                          'bg-gray-100 text-gray-800'
+                        }`}>
+                          {u.role === 'agent_admin' ? 'Admin. Agentes' : 
+                           u.role === 'org_admin' ? 'Admin. Org.' : u.role}
+                        </span>
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap">
+                        <span class={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                          u.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {u.is_active ? 'Activo' : 'Inactivo'}
+                        </span>
+                      </td>
+                      <td class="px-6 py-4 whitespace-nowrap flex gap-2">
+                        <form method="post" action={`/admin/tenants/${tenant.id}/users/${u.id}/toggle`}>
+                          <button 
+                            type="submit" 
+                            class={`text-sm font-medium ${
+                              u.is_active 
+                                ? 'text-red-600 hover:text-red-800' 
+                                : 'text-green-600 hover:text-green-800'
+                            }`}
+                          >
+                            {u.is_active ? 'Desactivar' : 'Activar'}
+                          </button>
+                        </form>
+                        {/* Promover a Org Admin - solo para clientes (no tenant principal) */}
+                        {user.role === 'super_admin' && tenant.id !== 1 && u.role === 'user' && (
+                          <form method="post" action={`/admin/tenants/${tenant.id}/users/${u.id}/promote`}>
+                            <button 
+                              type="submit" 
+                              class="text-sm font-medium text-blue-600 hover:text-blue-800"
+                            >
+                              Promover a Org Admin
+                            </button>
+                          </form>
+                        )}
+                        {/* Quitar Org Admin - solo para clientes (no tenant principal) */}
+                        {user.role === 'super_admin' && tenant.id !== 1 && u.role === 'org_admin' && (
+                          <form method="post" action={`/admin/tenants/${tenant.id}/users/${u.id}/demote`}>
+                            <button 
+                              type="submit" 
+                              class="text-sm font-medium text-orange-600 hover:text-orange-800"
+                            >
+                              Quitar Org Admin
+                            </button>
+                          </form>
+                        )}
+                        {/* Promover a Agente - solo en tenant principal (equipo interno) */}
+                        {['super_admin', 'agent_admin'].includes(user.role) && tenant.id === 1 && u.role === 'user' && (
+                          <form method="post" action={`/admin/tenants/${tenant.id}/users/${u.id}/promote-agent`}>
+                            <button 
+                              type="submit" 
+                              class="text-sm font-medium text-green-600 hover:text-green-800"
+                            >
+                              Promover a Agente
+                            </button>
+                          </form>
+                        )}
+                        {/* Quitar Agente - solo en tenant principal */}
+                        {['super_admin', 'agent_admin'].includes(user.role) && tenant.id === 1 && u.role === 'agent' && (
+                          <form method="post" action={`/admin/tenants/${tenant.id}/users/${u.id}/demote-agent`}>
+                            <button 
+                              type="submit" 
+                              class="text-sm font-medium text-orange-600 hover:text-orange-800"
+                            >
+                              Quitar Agente
+                            </button>
+                          </form>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div class="p-6 text-center text-gray-500">
+              No hay usuarios en esta organización
+            </div>
+          )}
+        </div>
+      </div>
+    </Layout>
+  );
+});
+
+/**
+ * POST /admin/tenants/:id/toggle - Activar/Desactivar organización
+ */
+adminRoutes.post('/admin/tenants/:id/toggle', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  const tenantId = parseInt(c.req.param('id'));
+  
+  // Solo super_admin puede desactivar organizaciones
+  if (user.role !== 'super_admin') {
+    return c.text('No autorizado', 403);
+  }
+  
+  try {
+    // Obtener estado actual
+    const tenant = await c.env.DB
+      .prepare('SELECT is_active FROM tenants WHERE id = ?')
+      .bind(tenantId)
+      .first<{ is_active: number }>();
+    
+    if (!tenant) {
+      return c.text('Organización no encontrada', 404);
+    }
+    
+    // Toggle estado
+    await c.env.DB
+      .prepare('UPDATE tenants SET is_active = ? WHERE id = ?')
+      .bind(tenant.is_active ? 0 : 1, tenantId)
+      .run();
+    
+    return c.redirect(`/admin/tenants/${tenantId}`);
+    
+  } catch (error) {
+    console.error('Toggle tenant error:', error);
+    return c.text('Error al cambiar estado de organización', 500);
+  }
+});
+
+/**
+ * POST /admin/tenants/:tenantId/users/:userId/toggle - Activar/Desactivar usuario
+ */
+adminRoutes.post('/admin/tenants/:tenantId/users/:userId/toggle', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  const tenantId = parseInt(c.req.param('tenantId'));
+  const userId = parseInt(c.req.param('userId'));
+  
+  // Verificar acceso (super_admin o admin del mismo tenant)
+  if (user.role !== 'super_admin' && user.tenant_id !== tenantId) {
+    return c.text('No autorizado', 403);
+  }
+  
+  try {
+    // Obtener estado actual del usuario
+    const targetUser = await c.env.DB
+      .prepare('SELECT is_active, tenant_id FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ is_active: number; tenant_id: number }>();
+    
+    if (!targetUser || targetUser.tenant_id !== tenantId) {
+      return c.text('Usuario no encontrado', 404);
+    }
+    
+    // Toggle estado
+    await c.env.DB
+      .prepare('UPDATE users SET is_active = ? WHERE id = ?')
+      .bind(targetUser.is_active ? 0 : 1, userId)
+      .run();
+    
+    return c.redirect(`/admin/tenants/${tenantId}`);
+    
+  } catch (error) {
+    console.error('Toggle user error:', error);
+    return c.text('Error al cambiar estado de usuario', 500);
+  }
+});
+
+/**
+ * POST /admin/tenants/:tenantId/users/:userId/promote - Promover usuario a org_admin
+ * Solo super_admin puede promover
+ */
+adminRoutes.post('/admin/tenants/:tenantId/users/:userId/promote', requireSuperAdmin, async (c) => {
+  const tenantId = parseInt(c.req.param('tenantId'));
+  const userId = parseInt(c.req.param('userId'));
+  
+  try {
+    // Verificar que el usuario existe y pertenece al tenant
+    const targetUser = await c.env.DB
+      .prepare('SELECT id, tenant_id, role FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ id: number; tenant_id: number; role: string }>();
+    
+    if (!targetUser || targetUser.tenant_id !== tenantId) {
+      return c.text('Usuario no encontrado', 404);
+    }
+    
+    // Solo promover si es 'user'
+    if (targetUser.role !== 'user') {
+      return c.text('Solo se pueden promover usuarios con rol "user"', 400);
+    }
+    
+    // Promover a org_admin
+    await c.env.DB
+      .prepare("UPDATE users SET role = 'org_admin' WHERE id = ?")
+      .bind(userId)
+      .run();
+    
+    return c.redirect(`/admin/tenants/${tenantId}`);
+    
+  } catch (error) {
+    console.error('Promote user error:', error);
+    return c.text('Error al promover usuario', 500);
+  }
+});
+
+/**
+ * POST /admin/tenants/:tenantId/users/:userId/demote - Degradar org_admin a user
+ * Solo super_admin puede degradar
+ */
+adminRoutes.post('/admin/tenants/:tenantId/users/:userId/demote', requireSuperAdmin, async (c) => {
+  const tenantId = parseInt(c.req.param('tenantId'));
+  const userId = parseInt(c.req.param('userId'));
+  
+  try {
+    // Verificar que el usuario existe y pertenece al tenant
+    const targetUser = await c.env.DB
+      .prepare('SELECT id, tenant_id, role FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ id: number; tenant_id: number; role: string }>();
+    
+    if (!targetUser || targetUser.tenant_id !== tenantId) {
+      return c.text('Usuario no encontrado', 404);
+    }
+    
+    // Solo degradar si es 'org_admin'
+    if (targetUser.role !== 'org_admin') {
+      return c.text('Solo se pueden degradar usuarios con rol "org_admin"', 400);
+    }
+    
+    // Degradar a user
+    await c.env.DB
+      .prepare("UPDATE users SET role = 'user' WHERE id = ?")
+      .bind(userId)
+      .run();
+    
+    return c.redirect(`/admin/tenants/${tenantId}`);
+    
+  } catch (error) {
+    console.error('Demote user error:', error);
+    return c.text('Error al degradar usuario', 500);
+  }
+});
+
+/**
+ * POST /admin/tenants/:tenantId/users/:userId/promote-agent - Promover usuario a agente
+ * Solo super_admin y agent_admin pueden promover (solo en tenant principal)
+ */
+adminRoutes.post('/admin/tenants/:tenantId/users/:userId/promote-agent', requireAgentManager, async (c) => {
+  const tenantId = parseInt(c.req.param('tenantId'));
+  const userId = parseInt(c.req.param('userId'));
+  
+  // Solo permitido en el tenant principal (id = 1)
+  if (tenantId !== 1) {
+    return c.text('Esta acción solo está disponible para el equipo interno', 403);
+  }
+  
+  try {
+    // Verificar que el usuario existe y pertenece al tenant
+    const targetUser = await c.env.DB
+      .prepare('SELECT id, tenant_id, role FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ id: number; tenant_id: number; role: string }>();
+    
+    if (!targetUser || targetUser.tenant_id !== tenantId) {
+      return c.text('Usuario no encontrado', 404);
+    }
+    
+    // Solo promover si es 'user'
+    if (targetUser.role !== 'user') {
+      return c.text('Solo se pueden promover usuarios con rol "user"', 400);
+    }
+    
+    // Promover a agent
+    await c.env.DB
+      .prepare("UPDATE users SET role = 'agent' WHERE id = ?")
+      .bind(userId)
+      .run();
+    
+    return c.redirect(`/admin/tenants/${tenantId}`);
+    
+  } catch (error) {
+    console.error('Promote to agent error:', error);
+    return c.text('Error al promover usuario a agente', 500);
+  }
+});
+
+/**
+ * POST /admin/tenants/:tenantId/users/:userId/demote-agent - Degradar agente a user
+ * Solo super_admin y agent_admin pueden degradar
+ */
+adminRoutes.post('/admin/tenants/:tenantId/users/:userId/demote-agent', requireAgentManager, async (c) => {
+  const tenantId = parseInt(c.req.param('tenantId'));
+  const userId = parseInt(c.req.param('userId'));
+  
+  // Solo permitido en el tenant principal (id = 1)
+  if (tenantId !== 1) {
+    return c.text('Esta acción solo está disponible para el equipo interno', 403);
+  }
+  
+  try {
+    // Verificar que el usuario existe y pertenece al tenant
+    const targetUser = await c.env.DB
+      .prepare('SELECT id, tenant_id, role FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ id: number; tenant_id: number; role: string }>();
+    
+    if (!targetUser || targetUser.tenant_id !== tenantId) {
+      return c.text('Usuario no encontrado', 404);
+    }
+    
+    // Solo degradar si es 'agent'
+    if (targetUser.role !== 'agent') {
+      return c.text('Solo se pueden degradar usuarios con rol "agent"', 400);
+    }
+    
+    // Degradar a user
+    await c.env.DB
+      .prepare("UPDATE users SET role = 'user' WHERE id = ?")
+      .bind(userId)
+      .run();
+    
+    return c.redirect(`/admin/tenants/${tenantId}`);
+    
+  } catch (error) {
+    console.error('Demote agent error:', error);
+    return c.text('Error al degradar agente', 500);
+  }
+});
+
+/**
+ * POST /admin/tenants/:tenantId/domains/add - Añadir dominio permitido
+ */
+adminRoutes.post('/admin/tenants/:tenantId/domains/add', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  const tenantId = parseInt(c.req.param('tenantId'));
+  
+  // Verificar acceso
+  if (user.role !== 'super_admin' && user.tenant_id !== tenantId) {
+    return c.text('No autorizado', 403);
+  }
+  
+  try {
+    const formData = await c.req.formData();
+    const domain = (formData.get('domain') as string)?.toLowerCase().trim();
+    
+    if (!domain) {
+      return c.redirect(`/admin/tenants/${tenantId}`);
+    }
+    
+    // Verificar que el dominio no esté ya en otra organización
+    const allTenants = await c.env.DB
+      .prepare('SELECT id, name, allowed_domains FROM tenants WHERE id != ?')
+      .bind(tenantId)
+      .all<{ id: number; name: string; allowed_domains: string }>();
+    
+    for (const t of allTenants.results || []) {
+      const otherDomains: string[] = JSON.parse(t.allowed_domains || '[]');
+      if (otherDomains.includes(domain)) {
+        return c.text(`El dominio "${domain}" ya está asignado a la organización "${t.name}"`, 400);
+      }
+    }
+    
+    // Obtener dominios actuales
+    const tenant = await c.env.DB
+      .prepare('SELECT allowed_domains FROM tenants WHERE id = ?')
+      .bind(tenantId)
+      .first<{ allowed_domains: string }>();
+    
+    if (!tenant) {
+      return c.text('Tenant no encontrado', 404);
+    }
+    
+    const domains: string[] = JSON.parse(tenant.allowed_domains || '[]');
+    
+    // Añadir si no existe
+    if (!domains.includes(domain)) {
+      domains.push(domain);
+      await c.env.DB
+        .prepare('UPDATE tenants SET allowed_domains = ? WHERE id = ?')
+        .bind(JSON.stringify(domains), tenantId)
+        .run();
+    }
+    
+    return c.redirect(`/admin/tenants/${tenantId}`);
+    
+  } catch (error) {
+    console.error('Add domain error:', error);
+    return c.text('Error al añadir dominio', 500);
+  }
+});
+
+/**
+ * POST /admin/tenants/:tenantId/domains/remove - Eliminar dominio permitido
+ */
+adminRoutes.post('/admin/tenants/:tenantId/domains/remove', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  const tenantId = parseInt(c.req.param('tenantId'));
+  
+  // Verificar acceso
+  if (user.role !== 'super_admin' && user.tenant_id !== tenantId) {
+    return c.text('No autorizado', 403);
+  }
+  
+  try {
+    const formData = await c.req.formData();
+    const domain = (formData.get('domain') as string)?.toLowerCase().trim();
+    
+    if (!domain) {
+      return c.redirect(`/admin/tenants/${tenantId}`);
+    }
+    
+    // Obtener dominios actuales
+    const tenant = await c.env.DB
+      .prepare('SELECT allowed_domains FROM tenants WHERE id = ?')
+      .bind(tenantId)
+      .first<{ allowed_domains: string }>();
+    
+    if (!tenant) {
+      return c.text('Tenant no encontrado', 404);
+    }
+    
+    let domains: string[] = JSON.parse(tenant.allowed_domains || '[]');
+    
+    // Eliminar dominio
+    domains = domains.filter(d => d !== domain);
+    
+    await c.env.DB
+      .prepare('UPDATE tenants SET allowed_domains = ? WHERE id = ?')
+      .bind(JSON.stringify(domains), tenantId)
+      .run();
+    
+    return c.redirect(`/admin/tenants/${tenantId}`);
+    
+  } catch (error) {
+    console.error('Remove domain error:', error);
+    return c.text('Error al eliminar dominio', 500);
+  }
+});
+
+// ================================================
+// CONFIGURACIÓN DEL SISTEMA (solo super_admin)
+// ================================================
+
+/**
+ * GET /admin/settings - Página de configuración del sistema
+ */
+adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  
+  // Solo super_admin puede acceder
+  if (user.role !== 'super_admin') {
+    return c.text('No autorizado', 403);
+  }
+  
+  // Obtener configuración actual usando el servicio
+  const config = await getSystemConfig(c.env.DB);
+  const currentTimezone = config.timezone;
+  const sessionTimeoutMinutes = config.sessionTimeoutMinutes;
+  
+  // Obtener hora actual en la zona horaria configurada
+  const now = new Date();
+  let currentTimeInTz = '';
+  try {
+    currentTimeInTz = now.toLocaleString('es-ES', { 
+      timeZone: currentTimezone,
+      dateStyle: 'full',
+      timeStyle: 'long'
+    });
+  } catch {
+    currentTimeInTz = now.toISOString();
+  }
+  
+  return c.html(
+    <Layout title="Configuración del Sistema" user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
+      <div class="space-y-6">
+        <div class="flex items-center justify-between">
+          <h1 class="text-2xl font-bold text-gray-900">⚙️ Configuración del Sistema</h1>
+          <a href="/admin" class="text-blue-600 hover:text-blue-700">← Volver al Panel</a>
+        </div>
+        
+        {/* Zona Horaria */}
+        <div class="bg-white rounded-lg shadow">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">🕐 Zona Horaria</h2>
+            <p class="text-sm text-gray-500 mt-1">Configura la zona horaria para mostrar fechas y horas en el sistema.</p>
+          </div>
+          
+          <div class="p-6">
+            <form method="post" action="/admin/settings/timezone" class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">
+                  Zona Horaria Actual
+                </label>
+                <select 
+                  name="timezone" 
+                  class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  {TIMEZONES.map((tz) => (
+                    <option 
+                      key={tz.value} 
+                      value={tz.value} 
+                      selected={tz.value === currentTimezone}
+                    >
+                      {tz.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div class="bg-gray-50 rounded-lg p-4">
+                <p class="text-sm text-gray-600">
+                  <strong>Hora actual en {currentTimezone}:</strong>
+                </p>
+                <p class="text-lg font-medium text-gray-900 mt-1">{currentTimeInTz}</p>
+              </div>
+              
+              <button 
+                type="submit"
+                class="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
+              >
+                Guardar Zona Horaria
+              </button>
+            </form>
+          </div>
+        </div>
+        
+        {/* Timeout de Sesión */}
+        <div class="bg-white rounded-lg shadow">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">⏱️ Tiempo de Inactividad</h2>
+            <p class="text-sm text-gray-500 mt-1">Configura el tiempo de inactividad antes de cerrar la sesión automáticamente.</p>
+          </div>
+          
+          <div class="p-6">
+            <form method="post" action="/admin/settings/session-timeout" class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-2">
+                  Tiempo de inactividad (minutos)
+                </label>
+                <select 
+                  name="session_timeout_minutes" 
+                  class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                >
+                  {SESSION_TIMEOUT_OPTIONS.map((opt) => (
+                    <option 
+                      key={opt.value} 
+                      value={opt.value} 
+                      selected={sessionTimeoutMinutes === opt.value}
+                    >
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              
+              <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <p class="text-sm text-amber-800">
+                  <strong>⚠️ Nota:</strong> Cuando queden 30 segundos para cerrar la sesión, 
+                  el usuario verá una advertencia con opción de mantener la sesión activa.
+                </p>
+              </div>
+              
+              <button 
+                type="submit"
+                class="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
+              >
+                Guardar Tiempo de Inactividad
+              </button>
+            </form>
+          </div>
+        </div>
+        
+        {/* Información del Sistema */}
+        <div class="bg-white rounded-lg shadow">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">ℹ️ Información del Sistema</h2>
+          </div>
+          
+          <div class="p-6">
+            <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Aplicación</dt>
+                <dd class="text-lg text-gray-900">{c.env.APP_NAME || 'ActionQ'}</dd>
+              </div>
+              <div>
+                <dt class="text-sm font-medium text-gray-500">Versión</dt>
+                <dd class="text-lg text-gray-900">{c.env.APP_VERSION || '1.0.0'}</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </div>
+    </Layout>
+  );
+});
+
+/**
+ * POST /admin/settings/timezone - Guardar zona horaria
+ */
+adminRoutes.post('/admin/settings/timezone', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  
+  // Solo super_admin puede modificar
+  if (user.role !== 'super_admin') {
+    return c.text('No autorizado', 403);
+  }
+  
+  try {
+    const formData = await c.req.formData();
+    const timezone = formData.get('timezone') as string;
+    
+    const result = await setTimezone(c.env.DB, timezone);
+    
+    if (!result.success) {
+      return c.text(result.error || 'Error al guardar', 400);
+    }
+    
+    return c.redirect('/admin/settings');
+    
+  } catch (error) {
+    console.error('Save timezone error:', error);
+    return c.text('Error al guardar zona horaria', 500);
+  }
+});
+
+/**
+ * POST /admin/settings/session-timeout - Guardar tiempo de inactividad
+ */
+adminRoutes.post('/admin/settings/session-timeout', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  
+  // Solo super_admin puede modificar
+  if (user.role !== 'super_admin') {
+    return c.text('No autorizado', 403);
+  }
+  
+  try {
+    const formData = await c.req.formData();
+    const minutes = parseInt(formData.get('session_timeout_minutes') as string, 10);
+    
+    const result = await setSessionTimeout(c.env.DB, minutes);
+    
+    if (!result.success) {
+      return c.text(result.error || 'Error al guardar', 400);
+    }
+    
+    return c.redirect('/admin/settings');
+    
+  } catch (error) {
+    console.error('Save session timeout error:', error);
+    return c.text('Error al guardar tiempo de inactividad', 500);
+  }
+});
+
+export { adminRoutes };
