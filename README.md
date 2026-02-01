@@ -21,6 +21,9 @@ ActionQ es una **plantilla reutilizable (boilerplate)** para crear sistemas de g
 - 💾 **Base de datos**: Cloudflare D1 (SQLite distribuido)
 - 📦 **Zero Config**: Solo configura variables y despliega
 - 🔧 **First-Run Setup**: Wizard de configuración inicial automático
+- ⏱️ **Tiempo de Inactividad**: Desactivación automática de sesiones inactivas
+- 🤖 **Auto-asignación de Tickets**: Asignación automática a agentes con menor carga
+- 🔄 **Auto-cierre de Tickets**: Cierre automático de tickets pendientes después de X días
 
 ---
 
@@ -280,6 +283,54 @@ Cuando accedas por primera vez a la aplicación:
 > **Nota**: Los roles `super_admin`, `agent_admin` y `agent` forman el **equipo interno** y pueden ver tickets de todas las organizaciones. Los roles `org_admin` y `user` son **clientes** y están limitados a su organización.
 >
 > **Participantes**: Cualquier usuario puede añadir participantes a un ticket (usuarios de la misma organización). Los participantes pueden ver el ticket y añadir mensajes.
+
+---
+
+## 🤖 Características Avanzadas
+
+### ⏱️ Tiempo de Inactividad
+
+El sistema monitorea la inactividad de las sesiones de usuario. Las sesiones inactivas se desactivan automáticamente después de un período configurable, mejorando la seguridad:
+
+- **Detección automática**: Se registra la última actividad del usuario
+- **Configuración flexible**: El `super_admin` puede establecer el tiempo de inactividad máximo
+- **Cierre seguro**: Requiere re-autenticación después del timeout
+- **Panel de control**: Accesible desde `/admin/settings`
+
+### 🤖 Auto-asignación de Tickets
+
+Asigna automáticamente tickets nuevos al agente disponible con menor carga de trabajo:
+
+- **Algoritmo inteligente**: Encuentra el agente con menos tickets en estados `open`, `in_progress` o `pending`
+- **Configuración por administrador**: `super_admin` y `agent_admin` pueden habilitar/deshabilitar
+- **Balanceo de carga**: Distribuye el trabajo equitativamente entre agentes
+- **Panel de control**: Activar/desactivar desde `/admin/settings`
+- **Compatibilidad**: Funciona con la creación manual de tickets y formularios de clientes
+
+**Flujo de auto-asignación:**
+1. Cliente crea un ticket (manual o formulario)
+2. Sistema verifica si auto-asignación está habilitada
+3. Busca el agente interno con menos tickets activos
+4. Asigna automáticamente el ticket al agente seleccionado
+5. El agente recibe la notificación (si está configurada)
+
+### 🔄 Auto-cierre de Tickets
+
+Cierra automáticamente tickets pendientes después de un número configurable de días sin respuesta:
+
+- **Cierre automático diario**: Se ejecuta a las 3:00 AM UTC (hora del servidor)
+- **Criterio de cierre**: Tickets en estado `pending` (esperando respuesta) más antiguos que X días
+- **Configuración flexible**: El `super_admin` establece los días de espera (predeterminado: 7 días)
+- **Estado final**: Los tickets se cierran con estado `closed`
+- **Historial**: Se mantiene el historial completo para auditoría
+- **Panel de control**: Configurar desde `/admin/settings`
+
+**Flujo de auto-cierre:**
+1. Ticket se cambia a estado `pending` (esperando respuesta)
+2. Cron job se ejecuta diariamente a las 3:00 AM UTC
+3. Busca tickets `pending` más antiguos que X días
+4. Actualiza estado a `closed` automáticamente
+5. Se registra en el historial como cierre automático
 
 ---
 
