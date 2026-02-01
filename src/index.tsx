@@ -34,14 +34,28 @@ import {
 } from './middleware/setup';
 
 // Utilidades y constantes extraídas
-import { formatDate, encryptValue, decryptValue } from './utils';
+import { formatDate } from './utils';
 import { 
   TICKET_STATUS_LABELS, 
   TICKET_STATUS_COLORS, 
-  PRIORITY_ORDER_SQL,
   TIMEZONES,
   SESSION_TIMEOUT_OPTIONS 
 } from './config/constants';
+
+// Servicios
+import { 
+  getSystemConfig, 
+  setTimezone, 
+  setSessionTimeout 
+} from './services/config.service';
+import { 
+  createSecureKey, 
+  decryptSecureKey, 
+  getSecureKeyById, 
+  deleteSecureKey,
+  logSecureKeyDeletion,
+  logSecureKeyCreation
+} from './services/secureKey.service';
 
 // ================================================
 // CREAR APP HONO
@@ -65,13 +79,10 @@ app.use('*', sessionMiddleware);
 // Cargar zona horaria del sistema y timeout de sesión
 app.use('*', async (c, next) => {
   try {
-    const configs = await c.env.DB
-      .prepare("SELECT key, value FROM system_config WHERE key IN ('timezone', 'session_timeout_minutes')")
-      .all<{ key: string; value: string }>();
-    
-    const configMap = new Map(configs.results?.map(r => [r.key, r.value]) || []);
-    c.set('timezone', configMap.get('timezone') || 'UTC');
-    c.set('sessionTimeoutMinutes', parseInt(configMap.get('session_timeout_minutes') || '5', 10));
+    const { getSystemConfig } = await import('./services/config.service');
+    const config = await getSystemConfig(c.env.DB);
+    c.set('timezone', config.timezone);
+    c.set('sessionTimeoutMinutes', config.sessionTimeoutMinutes);
   } catch {
     c.set('timezone', 'UTC');
     c.set('sessionTimeoutMinutes', 5);
@@ -2431,20 +2442,16 @@ app.post('/tickets/:id/secure-keys', requireAuth, async (c) => {
       return c.text('La etiqueta y el valor son requeridos', 400);
     }
     
-    // Encriptar el valor
-    const { encrypted, iv } = await encryptValue(value, c.env.APP_SECRET);
-    
-    // Guardar en la base de datos
-    await c.env.DB
-      .prepare('INSERT INTO secure_keys (ticket_id, label, encrypted_value, iv, created_by) VALUES (?, ?, ?, ?, ?)')
-      .bind(ticketId, label, encrypted, iv, user.id)
-      .run();
+    // Crear clave segura usando el servicio
+    await createSecureKey(c.env.DB, {
+      ticketId,
+      label,
+      value,
+      createdBy: user.id
+    }, c.env.APP_SECRET);
     
     // Añadir nota interna automática
-    await c.env.DB
-      .prepare('INSERT INTO messages (ticket_id, user_id, content, is_internal) VALUES (?, ?, ?, 1)')
-      .bind(ticketId, user.id, `🔐 ${user.name} añadió una clave segura: "${label}"`)
-      .run();
+    await logSecureKeyCreation(c.env.DB, ticketId, user.id, user.name, label);
     
     return c.redirect(`/tickets/${ticketId}`);
     
@@ -2489,18 +2496,15 @@ app.get('/tickets/:id/secure-keys/:keyId/decrypt', requireAuth, async (c) => {
       return c.json({ error: 'No tienes permiso para ver esta clave' }, 403);
     }
     
-    // Obtener la clave encriptada
-    const secureKey = await c.env.DB
-      .prepare('SELECT encrypted_value, iv FROM secure_keys WHERE id = ? AND ticket_id = ?')
-      .bind(keyId, ticketId)
-      .first<{ encrypted_value: string; iv: string }>();
+    // Obtener la clave usando el servicio
+    const secureKey = await getSecureKeyById(c.env.DB, keyId);
     
-    if (!secureKey) {
+    if (!secureKey || secureKey.ticket_id !== ticketId) {
       return c.json({ error: 'Clave no encontrada' }, 404);
     }
     
-    // Desencriptar
-    const decryptedValue = await decryptValue(secureKey.encrypted_value, secureKey.iv, c.env.APP_SECRET);
+    // Desencriptar usando el servicio
+    const decryptedValue = await decryptSecureKey(secureKey, c.env.APP_SECRET);
     
     return c.json({ value: decryptedValue });
     
@@ -2542,27 +2546,18 @@ app.post('/tickets/:id/secure-keys/:keyId/delete', requireAuth, async (c) => {
       return c.text('No tienes permiso para eliminar claves', 403);
     }
     
-    // Obtener info de la clave antes de eliminar
-    const secureKey = await c.env.DB
-      .prepare('SELECT label FROM secure_keys WHERE id = ? AND ticket_id = ?')
-      .bind(keyId, ticketId)
-      .first<{ label: string }>();
+    // Obtener info de la clave antes de eliminar usando el servicio
+    const secureKey = await getSecureKeyById(c.env.DB, keyId);
     
-    if (!secureKey) {
+    if (!secureKey || secureKey.ticket_id !== ticketId) {
       return c.text('Clave no encontrada', 404);
     }
     
-    // Eliminar la clave
-    await c.env.DB
-      .prepare('DELETE FROM secure_keys WHERE id = ? AND ticket_id = ?')
-      .bind(keyId, ticketId)
-      .run();
+    // Eliminar la clave usando el servicio
+    await deleteSecureKey(c.env.DB, keyId);
     
     // Añadir nota interna automática
-    await c.env.DB
-      .prepare('INSERT INTO messages (ticket_id, user_id, content, is_internal) VALUES (?, ?, ?, 1)')
-      .bind(ticketId, user.id, `🗑️ ${user.name} eliminó la clave segura: "${secureKey.label}"`)
-      .run();
+    await logSecureKeyDeletion(c.env.DB, ticketId, user.id, user.name, secureKey.label);
     
     return c.redirect(`/tickets/${ticketId}`);
     
@@ -2726,14 +2721,14 @@ app.post('/tickets/:id/messages', requireAuth, async (c) => {
     }
     
     if (secureKeyValue && secureKeyConfirmed && messageId) {
-      // Encriptar el valor
-      const { encrypted, iv } = await encryptValue(secureKeyValue, c.env.APP_SECRET);
-      
-      // Guardar la clave vinculada al mensaje
-      await c.env.DB
-        .prepare('INSERT INTO secure_keys (ticket_id, encrypted_value, iv, created_by, message_id) VALUES (?, ?, ?, ?, ?)')
-        .bind(ticketId, encrypted, iv, user.id, messageId)
-        .run();
+      // Crear clave segura vinculada al mensaje usando el servicio
+      await createSecureKey(c.env.DB, {
+        ticketId,
+        label: 'Clave adjunta al mensaje',
+        value: secureKeyValue,
+        createdBy: user.id,
+        messageId: Number(messageId)
+      }, c.env.APP_SECRET);
     }
     
     // Actualizar fecha de actualización del ticket
@@ -4129,14 +4124,10 @@ app.get('/admin/settings', requireAdmin, async (c) => {
     return c.text('No autorizado', 403);
   }
   
-  // Obtener configuración actual
-  const configs = await c.env.DB
-    .prepare("SELECT key, value FROM system_config WHERE key IN ('timezone', 'session_timeout_minutes')")
-    .all<{ key: string; value: string }>();
-  
-  const configMap = new Map(configs.results?.map(r => [r.key, r.value]) || []);
-  const currentTimezone = configMap.get('timezone') || 'UTC';
-  const sessionTimeoutMinutes = parseInt(configMap.get('session_timeout_minutes') || '5', 10);
+  // Obtener configuración actual usando el servicio
+  const config = await getSystemConfig(c.env.DB);
+  const currentTimezone = config.timezone;
+  const sessionTimeoutMinutes = config.sessionTimeoutMinutes;
   
   // Obtener hora actual en la zona horaria configurada
   const now = new Date();
@@ -4290,26 +4281,11 @@ app.post('/admin/settings/timezone', requireAdmin, async (c) => {
     const formData = await c.req.formData();
     const timezone = formData.get('timezone') as string;
     
-    if (!timezone) {
-      return c.text('Zona horaria requerida', 400);
-    }
+    const result = await setTimezone(c.env.DB, timezone);
     
-    // Validar que la zona horaria sea válida
-    try {
-      new Date().toLocaleString('es-ES', { timeZone: timezone });
-    } catch {
-      return c.text('Zona horaria inválida', 400);
+    if (!result.success) {
+      return c.text(result.error || 'Error al guardar', 400);
     }
-    
-    // Insertar o actualizar configuración
-    await c.env.DB
-      .prepare(`
-        INSERT INTO system_config (key, value, updated_at) 
-        VALUES ('timezone', ?, datetime('now'))
-        ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')
-      `)
-      .bind(timezone, timezone)
-      .run();
     
     return c.redirect('/admin/settings');
     
@@ -4334,19 +4310,11 @@ app.post('/admin/settings/session-timeout', requireAdmin, async (c) => {
     const formData = await c.req.formData();
     const minutes = parseInt(formData.get('session_timeout_minutes') as string, 10);
     
-    if (!minutes || minutes < 1 || minutes > 480) {
-      return c.text('Tiempo de inactividad inválido (1-480 minutos)', 400);
-    }
+    const result = await setSessionTimeout(c.env.DB, minutes);
     
-    // Insertar o actualizar configuración
-    await c.env.DB
-      .prepare(`
-        INSERT INTO system_config (key, value, updated_at) 
-        VALUES ('session_timeout_minutes', ?, datetime('now'))
-        ON CONFLICT(key) DO UPDATE SET value = ?, updated_at = datetime('now')
-      `)
-      .bind(minutes.toString(), minutes.toString())
-      .run();
+    if (!result.success) {
+      return c.text(result.error || 'Error al guardar', 400);
+    }
     
     return c.redirect('/admin/settings');
     
