@@ -970,58 +970,6 @@ ticketRoutes.get('/tickets/:id', requireAuth, async (c) => {
                   </button>
                 </form>
               )}
-              
-              {/* Cambiar estado */}
-              {canChangeStatus && (
-                <div class="flex items-center gap-2">
-                  <span class="text-sm text-gray-600">Cambiar estado:</span>
-                  {ticket.status !== 'in_progress' && (
-                    <button 
-                      type="button"
-                      onclick={`document.getElementById('status-modal').classList.remove('hidden'); document.getElementById('new-status').value='in_progress';`}
-                      class="px-3 py-1 bg-yellow-100 text-yellow-800 text-sm rounded-lg hover:bg-yellow-200"
-                    >
-                      En Progreso
-                    </button>
-                  )}
-                  {ticket.status !== 'pending' && (
-                    <button 
-                      type="button"
-                      onclick={`document.getElementById('status-modal').classList.remove('hidden'); document.getElementById('new-status').value='pending';`}
-                      class="px-3 py-1 bg-purple-100 text-purple-800 text-sm rounded-lg hover:bg-purple-200"
-                    >
-                      Validando
-                    </button>
-                  )}
-                  {ticket.status !== 'resolved' && (
-                    <button 
-                      type="button"
-                      onclick={`document.getElementById('status-modal').classList.remove('hidden'); document.getElementById('new-status').value='resolved';`}
-                      class="px-3 py-1 bg-green-100 text-green-800 text-sm rounded-lg hover:bg-green-200"
-                    >
-                      Resuelto
-                    </button>
-                  )}
-                  {ticket.status !== 'closed' && (
-                    <button 
-                      type="button"
-                      onclick={`document.getElementById('status-modal').classList.remove('hidden'); document.getElementById('new-status').value='closed';`}
-                      class="px-3 py-1 bg-gray-100 text-gray-800 text-sm rounded-lg hover:bg-gray-200"
-                    >
-                      Cerrado
-                    </button>
-                  )}
-                  {isSuperAdmin && ticket.status === 'closed' && (
-                    <button 
-                      type="button"
-                      onclick={`document.getElementById('status-modal').classList.remove('hidden'); document.getElementById('new-status').value='open';`}
-                      class="px-3 py-1 bg-blue-100 text-blue-800 text-sm rounded-lg hover:bg-blue-200"
-                    >
-                      Reabrir
-                    </button>
-                  )}
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -1455,16 +1403,62 @@ ticketRoutes.get('/tickets/:id', requireAuth, async (c) => {
                 )}
                 
                 <div class="flex justify-between items-center">
-                  {isInternalTeam && !isClosed && (
-                    <label class="flex items-center space-x-2">
-                      <input type="checkbox" name="is_internal" value="1" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
-                      <span class="text-sm text-gray-600">Nota interna</span>
-                    </label>
-                  )}
-                  {isClosed && (
-                    <input type="hidden" name="is_internal" value="1" />
-                  )}
-                  {!isInternalTeam && !isClosed && <div></div>}
+                  <div class="flex items-center gap-4">
+                    {isInternalTeam && !isClosed && (
+                      <label class="flex items-center space-x-2">
+                        <input type="checkbox" name="is_internal" value="1" class="rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+                        <span class="text-sm text-gray-600">Nota interna</span>
+                      </label>
+                    )}
+                    {isClosed && (
+                      <input type="hidden" name="is_internal" value="1" />
+                    )}
+                    
+                    {/* Selector de cambio de estado (solo equipo interno) */}
+                    {canChangeStatus && (
+                      <div class="flex items-center gap-2">
+                        <label class="text-sm text-gray-600">Cambiar estado:</label>
+                        <select 
+                          name="new_status"
+                          id="status-select"
+                          class="px-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          onchange={`
+                            const submitBtn = document.getElementById('message-submit-btn');
+                            const textarea = document.querySelector('textarea[name=content]');
+                            if (this.value && this.value !== '${ticket.status}') {
+                              submitBtn.textContent = 'Enviar y cambiar estado';
+                              submitBtn.classList.remove('bg-blue-600', 'hover:bg-blue-700');
+                              submitBtn.classList.add('bg-green-600', 'hover:bg-green-700');
+                              textarea.required = true;
+                              textarea.placeholder = 'Escribe la razón del cambio de estado... (requerido)';
+                            } else {
+                              submitBtn.textContent = '${isClosed ? 'Añadir Nota' : 'Enviar'}';
+                              submitBtn.classList.remove('bg-green-600', 'hover:bg-green-700');
+                              submitBtn.classList.add('bg-blue-600', 'hover:bg-blue-700');
+                              textarea.placeholder = '${isClosed ? "Añadir nota interna..." : "Escribe un mensaje..."}';
+                            }
+                          `}
+                        >
+                          <option value="">Sin cambio</option>
+                          {ticket.status !== 'open' && (
+                            <option value="open">📬 Abierto</option>
+                          )}
+                          {ticket.status !== 'in_progress' && (
+                            <option value="in_progress">⏳ En Progreso</option>
+                          )}
+                          {ticket.status !== 'pending' && (
+                            <option value="pending">⏸️ Validando</option>
+                          )}
+                          {ticket.status !== 'resolved' && (
+                            <option value="resolved">✅ Resuelto</option>
+                          )}
+                          {ticket.status !== 'closed' && (
+                            <option value="closed">🔒 Cerrado</option>
+                          )}
+                        </select>
+                      </div>
+                    )}
+                  </div>
                   <div class="flex items-center gap-3">
                     <span id="secure-key-blocked-warning" class="hidden text-sm text-amber-600">
                       ⚠️ Marca "Acepto los riesgos" para enviar
@@ -1501,43 +1495,6 @@ ticketRoutes.get('/tickets/:id', requireAuth, async (c) => {
           <a href="/tickets" class="text-blue-600 hover:text-blue-700">
             ← Volver a tickets
           </a>
-        </div>
-        
-        {/* Modal para cambiar estado */}
-        <div id="status-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div class="bg-white rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-            <h3 class="text-lg font-semibold text-gray-900 mb-4">Cambiar Estado del Ticket</h3>
-            <form method="post" action={`/tickets/${ticket.id}/status`}>
-              <input type="hidden" id="new-status" name="status" value="" />
-              
-              <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Mensaje (requerido)</label>
-                <textarea 
-                  name="message" 
-                  rows={3}
-                  required
-                  placeholder="Explica el motivo del cambio de estado..."
-                  class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                ></textarea>
-              </div>
-              
-              <div class="flex justify-end gap-3">
-                <button 
-                  type="button"
-                  onclick="document.getElementById('status-modal').classList.add('hidden');"
-                  class="px-4 py-2 text-gray-700 hover:text-gray-900"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  type="submit"
-                  class="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
-                >
-                  Cambiar Estado
-                </button>
-              </div>
-            </form>
-          </div>
         </div>
       </div>
     </Layout>
@@ -2189,6 +2146,42 @@ ticketRoutes.post('/tickets/:id/messages', requireAuth, async (c) => {
         .prepare('INSERT INTO messages (ticket_id, user_id, content, is_internal) VALUES (?, ?, ?, 1)')
         .bind(ticketId, user.id, '🔄 El ticket ha vuelto a "En Progreso" debido a un nuevo mensaje.')
         .run();
+    }
+    
+    // Procesar cambio de estado si se seleccionó uno nuevo
+    const newStatus = formData.get('new_status') as string;
+    const validStatuses = ['open', 'in_progress', 'pending', 'resolved', 'closed'];
+    
+    if (newStatus && validStatuses.includes(newStatus) && newStatus !== ticket.status) {
+      // Solo equipo interno puede cambiar estado
+      if (isInternalTeam) {
+        // Verificar que se proporcionó un mensaje (razón del cambio)
+        if (!content.trim()) {
+          return c.text('Debes proporcionar una razón para cambiar el estado', 400);
+        }
+        
+        // Actualizar estado
+        await c.env.DB
+          .prepare("UPDATE tickets SET status = ?, updated_at = datetime('now') WHERE id = ?")
+          .bind(newStatus, ticketId)
+          .run();
+        
+        // Mapear estados a etiquetas legibles
+        const statusLabels: Record<string, string> = {
+          'open': 'Abierto',
+          'in_progress': 'En Progreso',
+          'pending': 'Validando',
+          'resolved': 'Resuelto',
+          'closed': 'Cerrado'
+        };
+        
+        // Añadir nota automática del cambio de estado
+        const statusNote = `📋 Estado cambiado de "${statusLabels[ticket.status] || ticket.status}" a "${statusLabels[newStatus] || newStatus}"`;
+        await c.env.DB
+          .prepare('INSERT INTO messages (ticket_id, user_id, content, is_internal) VALUES (?, ?, ?, 1)')
+          .bind(ticketId, user.id, statusNote)
+          .run();
+      }
     }
     
     return c.redirect(`/tickets/${ticketId}`);
