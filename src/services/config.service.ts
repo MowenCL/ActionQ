@@ -149,7 +149,7 @@ export async function setAutoAssignEnabled(
  * Obtiene el agente disponible con menos tickets activos asignados
  * Solo considera agentes activos (super_admin, agent_admin, agent)
  */
-export async function getAvailableAgent(db: D1Database): Promise<number | null> {
+export async function getAvailableAgent(db: D1Database): Promise<{ id: number; active_tickets: number } | null> {
   try {
     // Buscar agente con menos tickets activos (no cerrados)
     const result = await db.prepare(`
@@ -163,8 +163,9 @@ export async function getAvailableAgent(db: D1Database): Promise<number | null> 
       LIMIT 1
     `).first<{ id: number; active_tickets: number }>();
     
-    return result?.id || null;
-  } catch {
+    return result || null;
+  } catch (error) {
+    console.error('Error getting available agent:', error);
     return null;
   }
 }
