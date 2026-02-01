@@ -12,6 +12,7 @@ interface LayoutProps {
   title?: string;
   user?: SessionUser | null;
   showNav?: boolean;
+  sessionTimeoutMinutes?: number;
 }
 
 /**
@@ -22,7 +23,8 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
   children, 
   title = 'ActionQ',
   user = null,
-  showNav = true
+  showNav = true,
+  sessionTimeoutMinutes = 5
 }) => {
   return (
     <html lang="es">
@@ -77,7 +79,7 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
                     <a href="/tickets" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
                       Tickets
                     </a>
-                    {(user.role === 'super_admin' || user.role === 'admin') && (
+                    {(user.role === 'super_admin' || user.role === 'org_admin') && (
                       <a href="/admin" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
                         Administración
                       </a>
@@ -127,6 +129,120 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
             </p>
           </div>
         </footer>
+        
+        {/* Modal de advertencia de sesión */}
+        {user && (
+          <div id="session-timeout-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div class="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4 text-center">
+              <span class="text-4xl">⏰</span>
+              <h3 class="text-lg font-semibold text-gray-900 mt-3">Sesión por expirar</h3>
+              <p class="text-gray-600 mt-2">
+                Tu sesión se cerrará en <span id="session-countdown" class="font-bold text-red-600">30</span> segundos por inactividad.
+              </p>
+              <div class="mt-4 flex gap-3 justify-center">
+                <a 
+                  href="/logout" 
+                  class="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
+                >
+                  Cerrar sesión
+                </a>
+                <button 
+                  type="button"
+                  id="keep-session-btn"
+                  class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  Mantener sesión activa
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Script de timeout de sesión */}
+        {user && (
+          <script dangerouslySetInnerHTML={{ __html: `
+            (function() {
+              const TIMEOUT_MINUTES = ${sessionTimeoutMinutes};
+              const WARNING_SECONDS = 30;
+              const TIMEOUT_MS = TIMEOUT_MINUTES * 60 * 1000;
+              const WARNING_MS = TIMEOUT_MS - (WARNING_SECONDS * 1000);
+              
+              let warningTimer = null;
+              let logoutTimer = null;
+              let countdownInterval = null;
+              let countdownValue = WARNING_SECONDS;
+              
+              const modal = document.getElementById('session-timeout-modal');
+              const countdownEl = document.getElementById('session-countdown');
+              const keepBtn = document.getElementById('keep-session-btn');
+              
+              function showWarning() {
+                countdownValue = WARNING_SECONDS;
+                countdownEl.textContent = countdownValue;
+                modal.classList.remove('hidden');
+                
+                countdownInterval = setInterval(() => {
+                  countdownValue--;
+                  countdownEl.textContent = countdownValue;
+                  if (countdownValue <= 0) {
+                    clearInterval(countdownInterval);
+                  }
+                }, 1000);
+              }
+              
+              function hideWarning() {
+                modal.classList.add('hidden');
+                if (countdownInterval) {
+                  clearInterval(countdownInterval);
+                  countdownInterval = null;
+                }
+              }
+              
+              function logout() {
+                window.location.href = '/logout?reason=timeout';
+              }
+              
+              function resetTimers() {
+                hideWarning();
+                
+                if (warningTimer) clearTimeout(warningTimer);
+                if (logoutTimer) clearTimeout(logoutTimer);
+                
+                warningTimer = setTimeout(showWarning, WARNING_MS);
+                logoutTimer = setTimeout(logout, TIMEOUT_MS);
+              }
+              
+              function keepAlive() {
+                fetch('/session/keepalive', { method: 'POST', credentials: 'same-origin' })
+                  .then(() => resetTimers())
+                  .catch(() => resetTimers());
+              }
+              
+              // Eventos de actividad del usuario
+              const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart'];
+              let lastActivity = Date.now();
+              const DEBOUNCE_MS = 1000; // Solo resetear cada segundo máximo
+              
+              activityEvents.forEach(event => {
+                document.addEventListener(event, () => {
+                  const now = Date.now();
+                  if (now - lastActivity > DEBOUNCE_MS && modal.classList.contains('hidden')) {
+                    lastActivity = now;
+                    resetTimers();
+                  }
+                }, { passive: true });
+              });
+              
+              // Botón mantener sesión
+              if (keepBtn) {
+                keepBtn.addEventListener('click', keepAlive);
+              }
+              
+              // Iniciar timers
+              resetTimers();
+            })();
+          `}} />
+        )}
       </body>
     </html>
   );

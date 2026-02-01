@@ -1,0 +1,34 @@
+-- ================================================
+-- Migración: Añadir rol agent_admin
+-- ================================================
+--
+-- Este script actualiza la tabla users para soportar el nuevo rol 'agent_admin'.
+-- Nota: SQLite no permite modificar constraints directamente, así que necesitamos
+-- recrear la tabla. En D1/SQLite, el CHECK constraint es validado pero flexible.
+--
+-- En D1 de Cloudflare, los CHECK constraints son validados solo al insertar/actualizar,
+-- por lo que los datos existentes no se verán afectados. El nuevo rol 'agent_admin'
+-- será aceptado en nuevas operaciones.
+--
+-- Para ejecutar esta migración en desarrollo local:
+--   wrangler d1 execute actionq-db --local --file=./src/db/migrations/001_add_agent_admin_role.sql
+--
+-- Para ejecutar en producción:
+--   wrangler d1 execute actionq-db --file=./src/db/migrations/001_add_agent_admin_role.sql
+--
+-- ================================================
+
+-- La restricción CHECK ya existente en la tabla no bloquea la adición del nuevo valor
+-- porque SQLite evalúa el CHECK solo en INSERT/UPDATE. Sin embargo, para ser consistentes,
+-- podemos actualizar la definición documentalmente.
+
+-- Si necesitas recrear la tabla (en caso de tener problemas):
+-- 1. Crea una tabla temporal
+-- 2. Copia los datos
+-- 3. Borra la tabla original
+-- 4. Crea la nueva tabla con el CHECK actualizado
+-- 5. Copia los datos de vuelta
+-- 6. Borra la tabla temporal
+
+-- Nota: Este archivo es principalmente documentación ya que D1 acepta valores
+-- que cumplan con los nuevos roles automáticamente si el schema.sql se actualiza.

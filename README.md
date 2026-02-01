@@ -212,10 +212,47 @@ Cuando accedas por primera vez a la aplicación:
 
 | Rol | Descripción |
 |-----|-------------|
-| `super_admin` | Acceso total a todas las organizaciones |
-| `admin` | Administrador de una organización |
-| `agent` | Agente de soporte |
-| `user` | Usuario final (crea tickets) |
+| `super_admin` | Acceso total al sistema y todas las organizaciones |
+| `agent_admin` | Administrador de agentes - puede gestionar el equipo interno |
+| `agent` | Agente de soporte del equipo interno |
+| `org_admin` | Administrador de organización cliente - puede ver todos los tickets de su organización |
+| `user` | Usuario final que crea tickets |
+
+### Matriz de Permisos
+
+| Permiso | super_admin | agent_admin | agent | org_admin | user |
+|---------|:-----------:|:-----------:|:-----:|:---------:|:----:|
+| **Tickets** | | | | | |
+| Ver todos los tickets (todas las orgs) | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Ver tickets de su organización | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Ver sus propios tickets | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Ver tickets donde es participante | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Crear tickets propios | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Crear tickets en nombre de otros | ✅ | ✅ | ✅ | ✅¹ | ❌ |
+| Cambiar estado de tickets | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Auto-asignarse tickets | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Reasignar tickets a otros agentes | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Añadir participantes al ticket | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Añadir mensajes públicos | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Añadir notas internas | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Ver historial de tickets | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Usuarios** | | | | | |
+| Gestionar equipo interno (agentes) | ✅ | ✅ | ❌ | ❌ | ❌ |
+| Gestionar usuarios de su organización | ✅ | ❌ | ❌ | ✅ | ❌ |
+| Ver todos los usuarios del sistema | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Promover a agente | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Promover a org_admin | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Activar/desactivar usuarios | ✅ | ❌ | ❌ | ✅¹ | ❌ |
+| **Organizaciones** | | | | | |
+| Gestionar todas las organizaciones | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Crear nuevas organizaciones | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Activar/desactivar organizaciones | ✅ | ❌ | ❌ | ❌ | ❌ |
+
+> ¹ Solo para usuarios de su propia organización.
+>
+> **Nota**: Los roles `super_admin`, `agent_admin` y `agent` forman el **equipo interno** y pueden ver tickets de todas las organizaciones. Los roles `org_admin` y `user` son **clientes** y están limitados a su organización.
+>
+> **Participantes**: Cualquier usuario puede añadir participantes a un ticket (usuarios de la misma organización). Los participantes pueden ver el ticket y añadir mensajes.
 
 ---
 

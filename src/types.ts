@@ -52,6 +52,12 @@ export type Variables = {
   
   // Indica si el sistema está instalado
   isInstalled: boolean;
+  
+  // Zona horaria configurada para el sistema
+  timezone: string;
+  
+  // Tiempo de inactividad de sesión en minutos
+  sessionTimeoutMinutes: number;
 };
 
 // ================================================
@@ -73,8 +79,13 @@ export type AppEnv = {
 
 /**
  * Roles de usuario disponibles en el sistema.
+ * - super_admin: Acceso total al sistema (equipo interno)
+ * - agent_admin: Administrador de agentes, puede asignar tickets (equipo interno)
+ * - agent: Agente de soporte (equipo interno)
+ * - org_admin: Administrador de organización (cliente) - solo gestión de su org
+ * - user: Usuario final (cliente)
  */
-export type UserRole = 'super_admin' | 'admin' | 'agent' | 'user';
+export type UserRole = 'super_admin' | 'agent_admin' | 'agent' | 'org_admin' | 'user';
 
 /**
  * Estados posibles de un ticket.
@@ -125,6 +136,7 @@ export interface Ticket {
   status: TicketStatus;
   priority: TicketPriority;
   created_by: number;
+  created_by_agent: number | null; // ID del agente que creó el ticket en nombre de otro
   assigned_to: number | null;
   created_at: string;
   updated_at: string;

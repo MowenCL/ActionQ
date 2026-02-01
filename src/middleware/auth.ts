@@ -149,11 +149,51 @@ export function clearSessionCookie(
 
 /**
  * Middleware que carga el usuario de la sesión en el contexto.
+ * Verifica que el usuario siga activo en la base de datos.
  * No bloquea la request si no hay usuario.
  */
 export const sessionMiddleware = createMiddleware<AppEnv>(async (c, next) => {
-  const user = await getSessionUser(c);
-  c.set('user', user);
+  const sessionUser = await getSessionUser(c);
+  
+  if (sessionUser) {
+    // Cargar datos actualizados del usuario y verificar que su organización esté activa
+    const dbUser = await c.env.DB
+      .prepare(`
+        SELECT u.id, u.name, u.email, u.role, u.tenant_id, u.is_active,
+               COALESCE(t.is_active, 1) as tenant_is_active
+        FROM users u
+        LEFT JOIN tenants t ON u.tenant_id = t.id
+        WHERE u.id = ?
+      `)
+      .bind(sessionUser.id)
+      .first<{ 
+        id: number; 
+        name: string; 
+        email: string; 
+        role: string; 
+        tenant_id: number | null; 
+        is_active: number;
+        tenant_is_active: number;
+      }>();
+    
+    if (dbUser && dbUser.is_active && dbUser.tenant_is_active) {
+      // Usuario y organización activos - usar datos actualizados de la BD
+      c.set('user', {
+        id: dbUser.id,
+        name: dbUser.name,
+        email: dbUser.email,
+        role: dbUser.role as SessionUser['role'],
+        tenant_id: dbUser.tenant_id
+      });
+    } else {
+      // Usuario desactivado, organización desactivada o usuario eliminado - limpiar sesión
+      c.set('user', null);
+      clearSessionCookie(c);
+    }
+  } else {
+    c.set('user', null);
+  }
+  
   await next();
 });
 
@@ -173,6 +213,7 @@ export const requireAuth = createMiddleware<AppEnv>(async (c, next) => {
 
 /**
  * Middleware que requiere rol de administrador.
+ * Incluye: super_admin, org_admin (admin de organización)
  */
 export const requireAdmin = createMiddleware<AppEnv>(async (c, next) => {
   const user = c.get('user');
@@ -181,7 +222,25 @@ export const requireAdmin = createMiddleware<AppEnv>(async (c, next) => {
     return c.redirect('/login');
   }
   
-  if (user.role !== 'super_admin' && user.role !== 'admin') {
+  if (user.role !== 'super_admin' && user.role !== 'org_admin') {
+    return c.text('No tienes permisos para acceder a esta página', 403);
+  }
+  
+  await next();
+});
+
+/**
+ * Middleware que permite acceso a roles que pueden gestionar asignaciones de tickets.
+ * Incluye: super_admin, agent_admin (NO incluye org_admin - es rol de cliente)
+ */
+export const requireAgentManager = createMiddleware<AppEnv>(async (c, next) => {
+  const user = c.get('user');
+  
+  if (!user) {
+    return c.redirect('/login');
+  }
+  
+  if (user.role !== 'super_admin' && user.role !== 'agent_admin') {
     return c.text('No tienes permisos para acceder a esta página', 403);
   }
   
