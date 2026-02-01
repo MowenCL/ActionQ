@@ -50,6 +50,7 @@ export interface SessionUser {
   name: string;
   role: UserRole;
   tenant_id: number | null;
+  must_change_password?: boolean;
 }
 
 /**

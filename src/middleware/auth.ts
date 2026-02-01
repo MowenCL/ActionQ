@@ -159,7 +159,7 @@ export const sessionMiddleware = createMiddleware<AppEnv>(async (c, next) => {
     // Cargar datos actualizados del usuario y verificar que su organización esté activa
     const dbUser = await c.env.DB
       .prepare(`
-        SELECT u.id, u.name, u.email, u.role, u.tenant_id, u.is_active,
+        SELECT u.id, u.name, u.email, u.role, u.tenant_id, u.is_active, u.must_change_password,
                COALESCE(t.is_active, 1) as tenant_is_active
         FROM users u
         LEFT JOIN tenants t ON u.tenant_id = t.id
@@ -173,6 +173,7 @@ export const sessionMiddleware = createMiddleware<AppEnv>(async (c, next) => {
         role: string; 
         tenant_id: number | null; 
         is_active: number;
+        must_change_password: number;
         tenant_is_active: number;
       }>();
     
@@ -183,7 +184,8 @@ export const sessionMiddleware = createMiddleware<AppEnv>(async (c, next) => {
         name: dbUser.name,
         email: dbUser.email,
         role: dbUser.role as SessionUser['role'],
-        tenant_id: dbUser.tenant_id
+        tenant_id: dbUser.tenant_id,
+        must_change_password: !!dbUser.must_change_password
       });
     } else {
       // Usuario desactivado, organización desactivada o usuario eliminado - limpiar sesión

@@ -7,7 +7,7 @@
 import { Hono } from 'hono';
 import type { AppEnv, SessionUser, User } from '../types';
 import { Layout, MinimalLayout } from '../views/Layout';
-import { SetupPage, LoginPage, RegisterPage, ResetPasswordPage } from '../views/pages';
+import { SetupPage, LoginPage, RegisterPage, ResetPasswordPage, SetupSuccessPage, ForceChangePasswordPage } from '../views/pages';
 import { 
   requireAuth,
   setSessionCookie, 
@@ -34,6 +34,10 @@ import {
   createOTP,
   validateOTP
 } from '../services/otp.service';
+import {
+  generateSecurePassword,
+  isSecurePassword
+} from '../utils/password-generator';
 
 const authRoutes = new Hono<AppEnv>();
 
@@ -42,118 +46,90 @@ const authRoutes = new Hono<AppEnv>();
 // ================================================
 
 /**
- * GET /setup - Formulario de configuración inicial
+ * GET /setup - Formulario de configuración inicial (interactivo)
  */
-authRoutes.get('/setup', onlyIfNotInstalledMiddleware, async (c) => {
-  const adminEmail = c.env.ADMIN_INIT_EMAIL || '';
-  
-  if (!adminEmail) {
-    return c.html(
-      <MinimalLayout title="Error de Configuración">
-        <div class="max-w-md w-full bg-white rounded-xl shadow-lg p-8 text-center">
-          <span class="text-5xl">⚠️</span>
-          <h1 class="mt-4 text-xl font-bold text-red-600">Error de Configuración</h1>
-          <p class="mt-2 text-sm text-gray-600">
-            La variable de entorno <code class="bg-gray-100 px-1 rounded">ADMIN_INIT_EMAIL</code> no está configurada.
-          </p>
-          <p class="mt-4 text-sm text-gray-500">
-            Configura los secretos usando <code class="bg-gray-100 px-1 rounded">wrangler secret put</code>
-          </p>
-        </div>
-      </MinimalLayout>
-    );
+authRoutes.get('/setup', async (c) => {
+  const db = c.env.DB;
+
+  // Verificar si el setup fue completado
+  const configResult = await db
+    .prepare(
+      "SELECT value FROM system_config WHERE key = 'setup_completed'"
+    )
+    .first();
+
+  if (configResult) {
+    // Ya existe admin, redirigir al login
+    return c.redirect('/login');
   }
-  
+
+  // Mostrar página de setup
   return c.html(
     <MinimalLayout title="Configuración Inicial">
-      <SetupPage adminEmail={adminEmail} />
+      <SetupPage />
     </MinimalLayout>
   );
 });
 
 /**
- * POST /setup - Procesar configuración inicial
+ * POST /setup - Crea el usuario administrador con email y contraseña temporal generada
  */
-authRoutes.post('/setup', onlyIfNotInstalledMiddleware, async (c) => {
-  const adminEmail = c.env.ADMIN_INIT_EMAIL;
-  const adminPassword = c.env.ADMIN_INIT_PASSWORD;
-  
-  if (!adminEmail || !adminPassword) {
-    return c.html(
-      <MinimalLayout title="Error">
-        <SetupPage 
-          adminEmail={adminEmail || ''} 
-          error="Variables de entorno ADMIN_INIT_EMAIL y ADMIN_INIT_PASSWORD son requeridas" 
-        />
-      </MinimalLayout>
-    );
-  }
-  
+authRoutes.post('/setup', async (c) => {
   try {
+    const db = c.env.DB;
     const formData = await c.req.formData();
-    const name = formData.get('name') as string;
-    const organization = formData.get('organization') as string;
-    
-    if (!name || !organization) {
+    const email = formData.get('email') as string;
+
+    // Validar email
+    if (!email || !email.includes('@')) {
       return c.html(
-        <MinimalLayout title="Error">
-          <SetupPage 
-            adminEmail={adminEmail} 
-            error="Todos los campos son requeridos" 
-          />
+        <MinimalLayout title="Configuración Inicial">
+          <SetupPage error="Por favor proporciona un email válido" />
         </MinimalLayout>
       );
     }
-    
-    // Crear slug para la organización
-    const slug = organization
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-|-$/g, '');
-    
-    // Generar hash de contraseña
+
+    // Generar contraseña temporal segura (16 caracteres)
+    const tempPassword = generateSecurePassword(16);
+
+    // Hash de la contraseña
     const salt = generateSalt();
-    const passwordHash = await hashPassword(adminPassword, salt);
+    const passwordHash = await hashPassword(tempPassword, salt);
     const storedHash = `${salt}:${passwordHash}`;
-    
-    // Crear tenant y usuario en una transacción
-    const db = c.env.DB;
-    
-    // 1. Crear tenant
-    const tenantResult = await db
-      .prepare('INSERT INTO tenants (name, slug) VALUES (?, ?) RETURNING id')
-      .bind(organization, slug)
-      .first<{ id: number }>();
-    
-    if (!tenantResult) {
-      throw new Error('No se pudo crear la organización');
-    }
-    
-    // 2. Crear usuario super_admin
-    await db
-      .prepare(`
-        INSERT INTO users (tenant_id, email, password_hash, name, role) 
-        VALUES (?, ?, ?, ?, 'super_admin')
-      `)
-      .bind(tenantResult.id, adminEmail, storedHash, name)
+
+    // Crear usuario admin en la BD
+    const result = await db
+      .prepare(
+        `INSERT INTO users (email, password_hash, role, is_active, must_change_password)
+         VALUES (?, ?, ?, 1, 1)`
+      )
+      .bind(email, storedHash, "admin")
       .run();
-    
-    // 3. Marcar sistema como instalado
-    await markSystemAsInstalled(db);
-    
-    // Redirigir al login
-    return c.redirect('/login?setup=success');
-    
-  } catch (error) {
-    console.error('Setup error:', error);
+
+    if (!result.success) {
+      throw new Error("No se pudo crear el usuario admin");
+    }
+
+    // Marcar setup como completado
+    await db
+      .prepare(
+        `INSERT INTO system_config (key, value) 
+         VALUES ('setup_completed', '1')
+         ON CONFLICT(key) DO UPDATE SET value = '1'`
+      )
+      .run();
+
+    // Mostrar página de éxito con credenciales
     return c.html(
-      <MinimalLayout title="Error">
-        <SetupPage 
-          adminEmail={adminEmail} 
-          error={`Error durante la configuración: ${error instanceof Error ? error.message : 'Error desconocido'}`} 
-        />
+      <MinimalLayout title="Configuración Completada">
+        <SetupSuccessPage email={email} tempPassword={tempPassword} />
+      </MinimalLayout>
+    );
+  } catch (error) {
+    console.error("Error en POST /setup:", error);
+    return c.html(
+      <MinimalLayout title="Configuración Inicial">
+        <SetupPage error="Ocurrió un error creando el administrador. Intenta nuevamente." />
       </MinimalLayout>
     );
   }
@@ -912,6 +888,92 @@ authRoutes.get('/register', (c) => {
       <RegisterPage />
     </MinimalLayout>
   );
+});
+
+/**
+ * GET /force-change-password - Página para cambiar contraseña temporal
+ */
+authRoutes.get('/force-change-password', requireAuth, async (c) => {
+  const user = c.get('user') as SessionUser;
+  
+  // Si el usuario no tiene el flag de cambio obligatorio, redirigir al dashboard
+  if (!user.must_change_password) {
+    return c.redirect('/dashboard');
+  }
+  
+  return c.html(
+    <MinimalLayout title="Cambiar Contraseña">
+      <ForceChangePasswordPage />
+    </MinimalLayout>
+  );
+});
+
+/**
+ * POST /force-change-password - Procesar cambio de contraseña
+ */
+authRoutes.post('/force-change-password', requireAuth, async (c) => {
+  try {
+    const user = c.get('user') as SessionUser;
+    
+    // Verificar que el usuario está autenticado
+    if (!user || !user.id) {
+      return c.redirect('/login');
+    }
+
+    const db = c.env.DB;
+    const formData = await c.req.formData();
+    const newPassword = formData.get('new_password') as string;
+    const confirmPassword = formData.get('confirm_password') as string;
+
+    // Validar que ambas contraseñas coincidan
+    if (newPassword !== confirmPassword) {
+      return c.html(
+        <MinimalLayout title="Cambiar Contraseña">
+          <ForceChangePasswordPage error="Las contraseñas no coinciden" />
+        </MinimalLayout>
+      );
+    }
+
+    // Validar que la contraseña sea segura
+    const validation = isSecurePassword(newPassword);
+    if (!validation.valid) {
+      const errorMsg = validation.errors.join(", ");
+      return c.html(
+        <MinimalLayout title="Cambiar Contraseña">
+          <ForceChangePasswordPage error={`Contraseña no válida: ${errorMsg}`} />
+        </MinimalLayout>
+      );
+    }
+
+    // Hash de la nueva contraseña
+    const salt = generateSalt();
+    const passwordHash = await hashPassword(newPassword, salt);
+    const storedHash = `${salt}:${passwordHash}`;
+
+    // Actualizar la contraseña y limpiar el flag must_change_password
+    const result = await db
+      .prepare(
+        `UPDATE users 
+         SET password_hash = ?, must_change_password = 0, updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      )
+      .bind(storedHash, user.id)
+      .run();
+
+    if (!result.success) {
+      throw new Error("No se pudo actualizar la contraseña");
+    }
+
+    // Redirigir al dashboard
+    return c.redirect('/dashboard?password_changed=true');
+  } catch (error) {
+    console.error("Error en POST /force-change-password:", error);
+    return c.html(
+      <MinimalLayout title="Cambiar Contraseña">
+        <ForceChangePasswordPage error="Ocurrió un error. Intenta nuevamente." />
+      </MinimalLayout>
+    );
+  }
 });
 
 /**

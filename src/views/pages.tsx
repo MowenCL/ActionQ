@@ -8,81 +8,189 @@ import type { FC } from 'hono/jsx';
 import type { SessionUser, Ticket } from '../types';
 
 // ================================================
-// PÁGINA DE SETUP (Primera instalación)
+// PÁGINA DE SETUP (Primera instalación - Interactiva)
 // ================================================
 
 interface SetupPageProps {
-  adminEmail: string;
   error?: string;
 }
 
-export const SetupPage: FC<SetupPageProps> = ({ adminEmail, error }) => {
+export const SetupPage: FC<SetupPageProps> = ({ error }) => {
   return (
-    <div class="max-w-md w-full bg-white rounded-xl shadow-lg p-8">
-      <div class="text-center mb-8">
-        <span class="text-5xl">🎫</span>
-        <h1 class="mt-4 text-2xl font-bold text-gray-900">Configuración Inicial</h1>
-        <p class="mt-2 text-sm text-gray-600">
-          Bienvenido a ActionQ. Configura tu cuenta de administrador.
-        </p>
-      </div>
-      
-      {error && (
-        <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p class="text-sm text-red-600">{error}</p>
-        </div>
-      )}
-      
-      <form method="post" action="/setup" class="space-y-6">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            Email del Administrador
-          </label>
-          <input 
-            type="email" 
-            name="email"
-            value={adminEmail}
-            readonly
-            class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
-          />
-          <p class="mt-1 text-xs text-gray-500">
-            Configurado en variables de entorno
+    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4 py-12">
+      <div class="w-full max-w-md">
+        <div class="bg-white rounded-lg shadow-lg p-8">
+          <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-900">ActionQ</h1>
+            <p class="mt-2 text-gray-600">Instalación Inicial</p>
+          </div>
+          
+          <p class="text-center text-gray-600 mb-8">
+            Configura tu administrador para comenzar
           </p>
+          
+          {error && (
+            <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <p class="text-sm text-red-800 font-medium">⚠️ {error}</p>
+            </div>
+          )}
+          
+          <form method="post" action="/setup" class="space-y-6">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">
+                Email del Administrador
+              </label>
+              <input
+                type="email"
+                name="email"
+                required
+                placeholder="admin@ejemplo.com"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <p class="mt-1 text-xs text-gray-500">
+                Este será tu usuario para acceder al sistema
+              </p>
+            </div>
+            
+            <button
+              type="submit"
+              class="w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              Crear Administrador
+            </button>
+          </form>
         </div>
-        
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            Nombre
-          </label>
-          <input 
-            type="text" 
-            name="name"
-            required
-            placeholder="Tu nombre completo"
-            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          />
+      </div>
+    </div>
+  );
+};
+
+// ================================================
+// PÁGINA DE SETUP EXITOSO (Mostrar credenciales)
+// ================================================
+
+interface SetupSuccessPageProps {
+  email: string;
+  tempPassword: string;
+}
+
+export const SetupSuccessPage: FC<SetupSuccessPageProps> = ({ email, tempPassword }) => {
+  return (
+    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-emerald-100 px-4 py-12">
+      <div class="w-full max-w-md">
+        <div class="bg-white rounded-lg shadow-lg p-8">
+          <div class="text-center mb-8">
+            <div class="text-5xl mb-4">✅</div>
+            <h1 class="text-3xl font-bold text-gray-900">¡Listo!</h1>
+            <p class="mt-2 text-gray-600">Tu administrador fue creado exitosamente</p>
+          </div>
+          
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-8">
+            <p class="text-sm text-gray-700 mb-4">
+              <span class="font-medium">Email:</span>
+            </p>
+            <p class="text-sm font-mono bg-white border border-blue-200 rounded p-3 mb-4 text-center">
+              {email}
+            </p>
+            
+            <p class="text-sm text-gray-700 mb-4">
+              <span class="font-medium">Contraseña temporal:</span>
+            </p>
+            <p class="text-sm font-mono bg-white border border-blue-200 rounded p-3 text-center break-all">
+              {tempPassword}
+            </p>
+          </div>
+          
+          <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-8">
+            <p class="text-sm text-amber-900">
+              <span class="font-bold">⚠️ IMPORTANTE:</span> Esta contraseña es temporal. 
+              Deberás cambiarla en tu primer acceso.
+            </p>
+          </div>
+          
+          <a
+            href="/login"
+            class="block w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors text-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            Ir a Login
+          </a>
         </div>
-        
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            Nombre de la Organización
-          </label>
-          <input 
-            type="text" 
-            name="organization"
-            required
-            placeholder="Mi Empresa"
-            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          />
+      </div>
+    </div>
+  );
+};
+
+// ================================================
+// PÁGINA DE CAMBIO FORZADO DE CONTRASEÑA
+// ================================================
+
+interface ForceChangePasswordPageProps {
+  error?: string;
+}
+
+export const ForceChangePasswordPage: FC<ForceChangePasswordPageProps> = ({ error }) => {
+  return (
+    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4 py-12">
+      <div class="w-full max-w-md">
+        <div class="bg-white rounded-lg shadow-lg p-8">
+          <div class="text-center mb-8">
+            <h1 class="text-2xl font-bold text-gray-900">Cambiar Contraseña</h1>
+            <p class="mt-2 text-sm text-gray-600">Primer acceso</p>
+          </div>
+          
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+            <p class="text-sm text-blue-900">
+              Por seguridad, debes cambiar tu contraseña temporal en tu primer acceso.
+            </p>
+          </div>
+          
+          {error && (
+            <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <p class="text-sm text-red-800 font-medium">⚠️ {error}</p>
+            </div>
+          )}
+          
+          <form method="post" action="/force-change-password" class="space-y-6">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">
+                Nueva Contraseña
+              </label>
+              <input
+                type="password"
+                name="new_password"
+                required
+                minLength={8}
+                placeholder="Mín. 8 caracteres"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <p class="mt-1 text-xs text-gray-500">
+                Debe incluir mayúscula, minúscula y número
+              </p>
+            </div>
+            
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-2">
+                Confirmar Contraseña
+              </label>
+              <input
+                type="password"
+                name="confirm_password"
+                required
+                minLength={8}
+                placeholder="Repite la contraseña"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            
+            <button
+              type="submit"
+              class="w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+            >
+              Cambiar Contraseña
+            </button>
+          </form>
         </div>
-        
-        <button 
-          type="submit"
-          class="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
-        >
-          Completar Configuración
-        </button>
-      </form>
+      </div>
     </div>
   );
 };

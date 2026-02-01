@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS users (
     name TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('super_admin', 'agent_admin', 'agent', 'org_admin', 'user')),
     is_active INTEGER DEFAULT 1,
+    must_change_password INTEGER DEFAULT 0,
     last_login_at TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
