@@ -1,208 +1,261 @@
-# ActionQ - Configuración de Producción
+# ActionQ - Configuración de Producción - IMPLEMENTACIÓN LIMPIA
 
-## Estado Actual ✅
+## ⚠️ ESTADO ACTUAL
 
-La aplicación está configurada para producción con:
+Este documento describe la **próxima implementación** de ActionQ con un flujo de setup interactivo mejorado.
 
-### Base de Datos
-- **D1 Database ID**: `c87de620-a2ac-4a4d-b876-cd0e6f417ed8`
-- **Database Name**: `actionq-db`
-- **Status**: ✅ Creada y vinculada
-- **Region**: ENAM
-
-### KV Store (OTP Storage)
-- **Namespace ID**: `1c6b892402224bd792d7988cb58754c3`
-- **Binding**: `OTP_STORE`
-- **Purpose**: Almacenamiento temporal de códigos OTP
-- **TTL**: Automático (15 minutos para OTP)
-
-### Secretos Configurados
-- **APP_SECRET**: ✅ Configurado en Cloudflare
-  - Usado para firmar cookies y tokens de sesión
-  - Se establece con: `npx wrangler secret put APP_SECRET`
-
-### Variables de Entorno
-```toml
-[vars]
-APP_NAME = "ActionQ"
-APP_VERSION = "1.0.0"
-```
-
-### Worker
-- **Name**: `actionq`
-- **URL**: https://actionq.ezzekmilofuentesxd.workers.dev
-- **Current Version**: `0e98f932-067b-4bf8-9ed2-9eae8c3fabad`
+**Status**: En desarrollo
+- ❌ KV Store: Eliminado
+- ❌ D1 Database: Eliminado  
+- ❌ Worker: Necesita recreación
+- ❌ Setup interactivo: Necesita implementación
 
 ---
 
-## Próximos Pasos - Instalación Limpia
+## 🎯 OBJETIVO PARA LA PRÓXIMA IA
 
-### 1. Acceder al Setup Inicial
+### Problema a Resolver
+El setup actual requiere variables de entorno hardcodeadas (.dev.vars), lo que es inflexible. 
 
-Abre la aplicación en el navegador:
-```
-https://actionq.ezzekmilofuentesxd.workers.dev/setup
-```
-
-### 2. Primera Ejecución
-
-En la primera ejecución:
-- Se crearán las tablas automáticamente
-- Se creará el Super Admin con las credenciales de `.dev.vars`:
-  - Email: `admin@actionq.local`
-  - Password: `ActionQ@Dev2024!Secure`
-
-⚠️ **IMPORTANTE**: Cambia estas credenciales inmediatamente después del login
-
-### 3. Configuración de Email (ZeptoMail)
-
-Para enviar OTPs y notificaciones:
-
-1. Accede a `/admin/settings/email-provider`
-2. Configura:
-   - **ZeptoMail API Token**: Tu token de ZeptoMail
-   - **Bounce Address**: Tu dirección de bounce (ej: bounce@tudominio.com)
-   - **From Address**: Dirección del remitente
-3. Guarda y prueba
-
-### 4. Habilitar OTP
-
-1. Accede a `/admin/settings/otp`
-2. Activa "Habilitar OTP para registro y reset de contraseña"
-3. Revisa los parámetros:
-   - Longitud: 6 dígitos
-   - TTL: 900 segundos (15 minutos)
-   - Intentos: 3
+**Solución**: Crear un **Setup Interactivo** donde:
+1. Usuario accede a `/setup` por primera vez
+2. Sistema detecta que es primer setup (tabla `system_config` vacía)
+3. Muestra formulario para:
+   - **Email del Admin**: Usuario lo ingresa
+   - **Contraseña Temporal**: Sistema genera una aleatoria y segura
+4. En el **primer login**, obliga a cambiar la contraseña
 
 ---
 
-## Configuración de Secretos en Producción
+## 📋 TAREAS PARA LA PRÓXIMA IA
 
-Para variables sensibles, usar `wrangler secret`:
+### TAREA 1: Crear flujo de Setup Interactivo
+**Archivo**: `src/routes/setup.routes.tsx`
 
-```bash
-# APP_SECRET (ya configurado)
-npx wrangler secret put APP_SECRET
+**Requerimientos**:
+- [ ] GET `/setup` debe verificar si es primer setup
+  - Si `system_config` está vacía → mostrar formulario
+  - Si ya existe config → redirigir a `/login`
+  
+- [ ] Formulario debe pedir:
+  - Email del Super Admin (validación email)
+  - Campo para confirmar email
+  - NO pedir contraseña (se genera automáticamente)
+  
+- [ ] POST `/setup` debe:
+  - Generar contraseña aleatoria segura (12+ caracteres, mayús, minús, números, símbolos)
+  - Mostrar contraseña temporal al usuario con mensaje:
+    ```
+    ✅ Super Admin creado exitosamente
+    
+    Email: usuario@ejemplo.com
+    Contraseña temporal: TemP@ssw0rd2024!
+    
+    ⚠️ Esta contraseña es temporal. Deberás cambiarla en tu primer login.
+    ```
+  - Crear usuario en tabla `users`
+  - Marcar en tabla `system_config` que setup fue completado
 
-# Si necesitas ZeptoMail en producción:
-npx wrangler secret put ZEPTOMAIL_API_TOKEN
+### TAREA 2: Forzar cambio de contraseña en primer login
+**Archivo**: `src/middleware/auth.ts` o nuevo middleware `password-force-change.ts`
 
-# Ver todos los secretos:
-npx wrangler secret list
+**Requerimientos**:
+- [ ] Crear columna en `users`: `must_change_password` (default: true)
+- [ ] Después del login, verificar esta columna
+- [ ] Si es true → redirigir a `/force-change-password`
+- [ ] Usuario no puede acceder a nada más hasta cambiar
+- [ ] Después de cambiar → marcar como false
+
+### TAREA 3: Página de cambio forzado de contraseña
+**Archivo**: `src/views/pages.tsx` (nuevo componente `ForceChangePasswordPage`)
+
+**Requerimientos**:
+- [ ] URL: `/force-change-password`
+- [ ] Mostrar mensaje: "Por seguridad, debes cambiar tu contraseña temporal en el primer acceso"
+- [ ] Campos:
+  - Contraseña actual (pre-llenada pero oculta)
+  - Nueva contraseña
+  - Confirmar nueva contraseña
+  - Botón "Cambiar Contraseña"
+- [ ] Validaciones:
+  - Mínimo 8 caracteres
+  - Al menos 1 mayúscula, 1 minúscula, 1 número
+- [ ] POST `/force-change-password` debe actualizar y marcar `must_change_password = false`
+
+### TAREA 4: Eliminación de dependencias hardcodeadas
+**Archivos afectados**: 
+- `src/routes/setup.routes.tsx` (línea donde usa ADMIN_INIT_EMAIL)
+- `.dev.vars` (actualizar si es necesario)
+- `wrangler.toml` (sin cambios)
+
+**Requerimientos**:
+- [ ] Remover todas las referencias a `ADMIN_INIT_EMAIL`
+- [ ] Remover todas las referencias a `ADMIN_INIT_PASSWORD`
+- [ ] El sistema debe funcionar SIN estas variables
+
+### TAREA 5: Base de datos y KV
+**Infraestructura necesaria**:
+- [ ] Crear nueva D1 Database: `npx wrangler d1 create actionq-db`
+- [ ] Crear nuevo KV Namespace: `npx wrangler kv:namespace create "OTP_STORE"`
+- [ ] Actualizar `wrangler.toml` con los IDs nuevos
+- [ ] Ejecutar migrations para crear tablas
+- [ ] Asegurar tabla `users` tiene columna `must_change_password`
+
+### TAREA 6: Testing
+**Verificaciones**:
+- [ ] Acceder a `/setup` muestra formulario si es primer setup
+- [ ] Después de crear admin, `/setup` redirige a `/login`
+- [ ] Login con admin temporal funciona
+- [ ] Después del login, redirige a `/force-change-password`
+- [ ] No puedo ir a otros URLs sin cambiar contraseña
+- [ ] Cambio de contraseña funciona
+- [ ] Próximo login usa nueva contraseña
+- [ ] Ya no me pide cambiar contraseña
+
+---
+
+## 🔧 IMPLEMENTACIÓN TÉCNICA
+
+### Flujo de Setup Completo
+
+```
+1. Usuario accede a https://actionq.workers.dev
+   ↓
+2. Detecta primer setup → redirige a /setup
+   ↓
+3. Formulario pide email
+   ↓
+4. Genera password temporal aleatoria
+   ↓
+5. Crea Super Admin en DB
+   ↓
+6. Muestra: "Email: X, Password: Y (temporal)"
+   ↓
+7. Usuario va a /login
+   ↓
+8. Sistema detecta must_change_password=true
+   ↓
+9. Redirige a /force-change-password
+   ↓
+10. Usuario ingresa nueva contraseña
+    ↓
+11. Valida y actualiza DB (must_change_password=false)
+    ↓
+12. Acceso a dashboard/admin
+```
+
+### Función para Generar Contraseña Aleatoria
+
+Crear en `src/utils/password-generator.ts`:
+
+```typescript
+export function generateSecurePassword(length: number = 16): string {
+  const uppercase = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const lowercase = 'abcdefghijklmnopqrstuvwxyz';
+  const numbers = '0123456789';
+  const symbols = '!@#$%^&*()_+-=[]{}|;:,.<>?';
+  
+  const all = uppercase + lowercase + numbers + symbols;
+  let password = '';
+  
+  // Asegurar al menos 1 de cada tipo
+  password += uppercase[Math.floor(Math.random() * uppercase.length)];
+  password += lowercase[Math.floor(Math.random() * lowercase.length)];
+  password += numbers[Math.floor(Math.random() * numbers.length)];
+  password += symbols[Math.floor(Math.random() * symbols.length)];
+  
+  // Llenar el resto aleatorio
+  for (let i = password.length; i < length; i++) {
+    password += all[Math.floor(Math.random() * all.length)];
+  }
+  
+  // Mezclar
+  return password.split('').sort(() => Math.random() - 0.5).join('');
+}
+```
+
+### Cambios en tabla `users`
+
+Agregar columna:
+```sql
+ALTER TABLE users ADD COLUMN must_change_password BOOLEAN DEFAULT 1;
+```
+
+### Cambios en tabla `system_config`
+
+Agregar fila si no existe:
+```sql
+INSERT INTO system_config (key, value) VALUES ('setup_completed', 'false');
+```
+
+Después del setup:
+```sql
+UPDATE system_config SET value = 'true' WHERE key = 'setup_completed';
 ```
 
 ---
 
-## Variables de Desarrollo Local (.dev.vars)
+## 🚀 CHECKLIST ANTES DE IMPLEMENTAR
 
-Este archivo contiene credenciales para desarrollo local:
-```
-APP_SECRET=a8f9e2b1d4c7a3f5e8b2d9c1a4f7e0b3c6d9e2f5a8b1c4d7e0f3a6b9c2e5f8
-ADMIN_INIT_EMAIL=admin@actionq.local
-ADMIN_INIT_PASSWORD=ActionQ@Dev2024!Secure
-```
-
-⚠️ Este archivo está en `.gitignore` y NO se sube a GitHub
-
----
-
-## Verificación de Salud
-
-### Comprobar que todo está en orden:
-
-```bash
-# Ver Worker actual
-npx wrangler whoami
-
-# Ver bindings
-npx wrangler deployments list
-
-# Verificar D1
-npx wrangler d1 info actionq-db
-
-# Verificar KV
-npx wrangler kv:key list --namespace-id 1c6b892402224bd792d7988cb58754c3
-```
-
-### Monitorear logs en vivo:
-```bash
-npx wrangler tail
-```
+- [ ] Clonar repo limpio
+- [ ] `npm install`
+- [ ] Crear D1 Database limpia
+- [ ] Crear KV Namespace limpio
+- [ ] Actualizar `wrangler.toml`
+- [ ] Ejecutar `npm run deploy`
+- [ ] Acceder a `/setup`
+- [ ] Ingresar email y completar setup
+- [ ] Verificar que funciona flujo completo
 
 ---
 
-## Flujo Completo de OTP
+## 📞 PREGUNTAS FRECUENTES (Para la próxima IA)
 
-### Registro con OTP
-1. Usuario accede a `/register`
-2. Ingresa email → Click "Continuar"
-3. Se envía OTP a su email
-4. Código cuenta con cooldown: 60 segundos (no puede solicitar nuevo)
-5. Máximo 3 solicitudes de código
-6. Ingresa código → Crea contraseña → Cuenta creada
+**P: ¿Dónde se almacena el email temporalmente?**
+A: En la base de datos D1, tabla `users`, durante el setup.
 
-### Reset de Contraseña con OTP
-1. Usuario accede a `/reset-password`
-2. Ingresa email → Click "Continuar"
-3. Se envía OTP a su email
-4. Mismo flujo de cooldown y límites
-5. Ingresa código → Nueva contraseña → Contraseña reseteada
+**P: ¿Qué pasa si alguien accede a `/setup` dos veces?**
+A: Sistema debe verificar `system_config` y redirigir a `/login` si ya está completado.
 
-### Limitaciones de OTP
-- **TTL**: 15 minutos
-- **Cooldown entre solicitudes**: 60 segundos
-- **Máximo de solicitudes**: 3 por sesión
-- **Intentos fallidos**: 3 antes de bloquear
-- **Auto-limpieza**: Se elimina código anterior al crear uno nuevo
+**P: ¿Cómo valido que el email es único?**
+A: Consulta `SELECT * FROM users WHERE email = ?` antes de crear.
+
+**P: ¿Debo permitir que edite el email después de setup?**
+A: Sí, en `/admin/settings/profile`, pero debe validar unicidad.
+
+**P: ¿Dónde se valida el cambio de contraseña?**
+A: En el endpoint POST `/force-change-password`, verificar patrón seguro.
 
 ---
 
-## Mantenimiento
+## 📊 ESTADO DE TAREAS
 
-### Limpiar KV Store (si es necesario)
-```bash
-npx wrangler kv:key delete --namespace-id 1c6b892402224bd792d7988cb58754c3 <KEY>
-
-# O listar todas las keys:
-npx wrangler kv:key list --namespace-id 1c6b892402224bd792d7988cb58754c3
-```
-
-### Backup de Base de Datos
-```bash
-npx wrangler d1 backup create actionq-db
-```
-
-### Ver backups
-```bash
-npx wrangler d1 backup list actionq-db
-```
+| Tarea | Status | Prioridad | Asignado a |
+|-------|--------|-----------|-----------|
+| Setup Interactivo | ⏳ Pendiente | 🔴 Alta | Próxima IA |
+| Cambio Forzado Password | ⏳ Pendiente | 🔴 Alta | Próxima IA |
+| Generador de Password | ⏳ Pendiente | 🟡 Media | Próxima IA |
+| Testing | ⏳ Pendiente | 🟡 Media | Próxima IA |
+| D1 + KV Setup | ⏳ Pendiente | 🔴 Alta | Próxima IA |
 
 ---
 
-## Troubleshooting
+## 📝 NOTAS IMPORTANTES
 
-### OTP no se envía
-1. Verificar que email está habilitado: `/admin/settings/email-provider`
-2. Revisar credenciales de ZeptoMail
-3. Ver logs: `npx wrangler tail`
-4. Verificar que el dominio está configurado en ZeptoMail
-
-### Countdown timer no funciona
-1. Abrir consola del navegador (F12)
-2. Buscar errores JavaScript
-3. Verificar que `nextRequestIn` viene del servidor
-4. Limpiar caché del navegador
-
-### No puedo crear usuario
-1. Verificar que `/setup` se ejecutó correctamente
-2. Revisar logs de base de datos
-3. Confirmar que la tabla `users` existe
+1. **NO uses variables de entorno** para admin credentials
+2. **TODO debe ser interactivo** - el usuario decide
+3. **Primera contraseña es temporal** - validar en middleware
+4. **Generador de contraseña segura** - mínimo 12 caracteres
+5. **Setup único** - después no se puede re-correr
 
 ---
 
-## Contacts & Support
+## 🔗 REFERENCIAS
 
-- **GitHub**: https://github.com/MowenCL/ActionQ
-- **Cloudflare Dashboard**: https://dash.cloudflare.com
-- **Worker URL**: https://actionq.ezzekmilofuentesxd.workers.dev
+- [Tabla Users Schema](./src/db/schema.sql) - Ver estructura actual
+- [Setup Routes Actuales](./src/routes/setup.routes.tsx) - Base para implementación
+- [Auth Middleware](./src/middleware/auth.ts) - Dónde validar must_change_password
+
+Última actualización: 2026-02-01
+Próxima IA: Implementar Setup Interactivo
 
