@@ -183,29 +183,48 @@ app.get('/dashboard', requireAuth, async (c) => {
     resolvedTickets: (statusCounts['resolved'] || 0) + (statusCounts['closed'] || 0),
   };
   
-  // Obtener tickets recientes con el mismo filtro
+  // Obtener tickets actualizados recientemente con info de última actividad
   let ticketsQuery: string;
   let ticketsResult;
   
+  // Query base con subquery para obtener el último mensaje y nombre del asignado
+  const baseSelect = `
+    SELECT t.*, 
+           u.name as assigned_to_name,
+           (
+             SELECT m.content FROM messages m 
+             WHERE m.ticket_id = t.id 
+             ORDER BY m.created_at DESC LIMIT 1
+           ) as last_message,
+           (
+             SELECT mu.name FROM messages m 
+             JOIN users mu ON m.user_id = mu.id
+             WHERE m.ticket_id = t.id 
+             ORDER BY m.created_at DESC LIMIT 1
+           ) as last_message_by
+    FROM tickets t
+    LEFT JOIN users u ON t.assigned_to = u.id
+  `;
+  
   if (isInternalTeam) {
-    // Equipo interno ve todos los tickets recientes
-    ticketsQuery = 'SELECT * FROM tickets ORDER BY created_at DESC LIMIT 5';
-    ticketsResult = await db.prepare(ticketsQuery).all<Ticket>();
+    // Equipo interno ve todos los tickets actualizados recientemente
+    ticketsQuery = `${baseSelect} ORDER BY t.updated_at DESC LIMIT 5`;
+    ticketsResult = await db.prepare(ticketsQuery).all<Ticket & { assigned_to_name: string | null; last_message: string | null; last_message_by: string | null }>();
   } else if (user.role === 'org_admin') {
-    // org_admin ve tickets recientes de su organización
-    ticketsQuery = 'SELECT * FROM tickets WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 5';
-    ticketsResult = await db.prepare(ticketsQuery).bind(user.tenant_id).all<Ticket>();
+    // org_admin ve tickets de su organización actualizados recientemente
+    ticketsQuery = `${baseSelect} WHERE t.tenant_id = ? ORDER BY t.updated_at DESC LIMIT 5`;
+    ticketsResult = await db.prepare(ticketsQuery).bind(user.tenant_id).all<Ticket & { assigned_to_name: string | null; last_message: string | null; last_message_by: string | null }>();
   } else {
-    // user: solo sus tickets
-    ticketsQuery = 'SELECT * FROM tickets WHERE created_by = ? ORDER BY created_at DESC LIMIT 5';
-    ticketsResult = await db.prepare(ticketsQuery).bind(user.id).all<Ticket>();
+    // user: solo sus tickets actualizados recientemente
+    ticketsQuery = `${baseSelect} WHERE t.created_by = ? ORDER BY t.updated_at DESC LIMIT 5`;
+    ticketsResult = await db.prepare(ticketsQuery).bind(user.id).all<Ticket & { assigned_to_name: string | null; last_message: string | null; last_message_by: string | null }>();
   }
   
   const recentTickets = ticketsResult.results || [];
   
   return c.html(
     <Layout title="Dashboard" user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
-      <DashboardPage user={user} stats={stats} recentTickets={recentTickets} />
+      <DashboardPage user={user} stats={stats} recentTickets={recentTickets as any} />
     </Layout>
   );
 });

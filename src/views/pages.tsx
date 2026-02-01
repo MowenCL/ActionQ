@@ -278,6 +278,13 @@ export const RegisterPage: FC<RegisterPageProps> = ({ error, success }) => {
 // PÁGINA DE DASHBOARD
 // ================================================
 
+// Tipo extendido para tickets con info de actividad
+interface RecentTicket extends Ticket {
+  assigned_to_name?: string | null;
+  last_message?: string | null;
+  last_message_by?: string | null;
+}
+
 interface DashboardPageProps {
   user: SessionUser;
   stats: {
@@ -286,8 +293,31 @@ interface DashboardPageProps {
     inProgressTickets: number;
     resolvedTickets: number;
   };
-  recentTickets: Ticket[];
+  recentTickets: RecentTicket[];
 }
+
+// Helper para generar descripción de actividad
+const getActivityDescription = (ticket: RecentTicket): string => {
+  if (ticket.last_message_by) {
+    return `Nuevo mensaje de ${ticket.last_message_by}`;
+  }
+  if (ticket.assigned_to_name) {
+    return `Asignado a ${ticket.assigned_to_name}`;
+  }
+  if (ticket.status === 'open') {
+    return 'Ticket abierto';
+  }
+  if (ticket.status === 'in_progress') {
+    return 'En progreso';
+  }
+  if (ticket.status === 'resolved') {
+    return 'Resuelto';
+  }
+  if (ticket.status === 'closed') {
+    return 'Cerrado';
+  }
+  return 'Sin asignar';
+};
 
 export const DashboardPage: FC<DashboardPageProps> = ({ user, stats, recentTickets }) => {
   return (
@@ -330,10 +360,10 @@ export const DashboardPage: FC<DashboardPageProps> = ({ user, stats, recentTicke
         />
       </div>
       
-      {/* Tickets recientes */}
+      {/* Tickets actualizados recientemente */}
       <div class="bg-white rounded-lg shadow">
         <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-          <h2 class="text-lg font-semibold text-gray-900">Tickets Recientes</h2>
+          <h2 class="text-lg font-semibold text-gray-900">Actualizados Recientemente</h2>
           <a href="/tickets/new" class="text-sm text-blue-600 hover:text-blue-700 font-medium">
             + Nuevo Ticket
           </a>
@@ -344,11 +374,15 @@ export const DashboardPage: FC<DashboardPageProps> = ({ user, stats, recentTicke
             {recentTickets.map((ticket) => (
               <li key={ticket.id} class="px-6 py-4 hover:bg-gray-50">
                 <a href={`/tickets/${ticket.id}`} class="flex items-center justify-between">
-                  <div>
-                    <p class="font-medium text-gray-900">{ticket.title}</p>
-                    <p class="text-sm text-gray-500">#{ticket.id}</p>
+                  <div class="min-w-0 flex-1">
+                    <p class="font-medium text-gray-900 truncate">{ticket.title}</p>
+                    <p class="text-sm text-gray-500">
+                      <span class="text-gray-400">#{ticket.id}</span>
+                      <span class="mx-2">•</span>
+                      <span class="text-blue-600">{getActivityDescription(ticket)}</span>
+                    </p>
                   </div>
-                  <div class="flex items-center space-x-2">
+                  <div class="flex items-center space-x-2 ml-4 flex-shrink-0">
                     <StatusBadge status={ticket.status} />
                     <PriorityBadge priority={ticket.priority} />
                   </div>
