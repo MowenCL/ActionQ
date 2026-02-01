@@ -2044,23 +2044,21 @@ app.post('/tickets/:id/secure-keys', requireAuth, async (c) => {
     }
     
     const formData = await c.req.formData();
-    const label = (formData.get('label') as string)?.trim();
     const value = formData.get('value') as string;
     
-    if (!label || !value) {
-      return c.text('La etiqueta y el valor son requeridos', 400);
+    if (!value) {
+      return c.text('El valor es requerido', 400);
     }
     
     // Crear clave segura usando el servicio
     await createSecureKey(c.env.DB, {
       ticketId,
-      label,
       value,
       createdBy: user.id
     }, c.env.APP_SECRET);
     
     // Añadir nota interna automática
-    await logSecureKeyCreation(c.env.DB, ticketId, user.id, user.name, label);
+    await logSecureKeyCreation(c.env.DB, ticketId, user.id, user.name);
     
     return c.redirect(`/tickets/${ticketId}`);
     
@@ -2166,7 +2164,7 @@ app.post('/tickets/:id/secure-keys/:keyId/delete', requireAuth, async (c) => {
     await deleteSecureKey(c.env.DB, keyId);
     
     // Añadir nota interna automática
-    await logSecureKeyDeletion(c.env.DB, ticketId, user.id, user.name, secureKey.label);
+    await logSecureKeyDeletion(c.env.DB, ticketId, user.id, user.name);
     
     return c.redirect(`/tickets/${ticketId}`);
     
@@ -2333,7 +2331,6 @@ app.post('/tickets/:id/messages', requireAuth, async (c) => {
       // Crear clave segura vinculada al mensaje usando el servicio
       await createSecureKey(c.env.DB, {
         ticketId,
-        label: 'Clave adjunta al mensaje',
         value: secureKeyValue,
         createdBy: user.id,
         messageId: Number(messageId)

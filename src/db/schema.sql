@@ -142,7 +142,6 @@ CREATE INDEX IF NOT EXISTS idx_ticket_participants_user ON ticket_participants(u
 -- ================================================
 -- Claves/contraseñas encriptadas asociadas a tickets.
 -- Solo visibles para participantes del ticket y agente asignado.
--- label: etiqueta descriptiva de la clave (ej: "Contraseña WiFi")
 -- encrypted_value: valor encriptado con AES-GCM en base64
 -- iv: initialization vector único en base64
 
@@ -150,7 +149,6 @@ CREATE TABLE IF NOT EXISTS secure_keys (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
     message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
-    label TEXT DEFAULT '',
     encrypted_value TEXT NOT NULL,
     iv TEXT NOT NULL,
     created_by INTEGER NOT NULL REFERENCES users(id),

@@ -13,7 +13,6 @@ import { encryptValue, decryptValue } from '../utils/crypto';
 export interface SecureKey {
   id: number;
   ticket_id: number;
-  label: string;
   message_id: number | null;
   encrypted_value: string;
   iv: string;
@@ -64,7 +63,6 @@ export async function createSecureKey(
   db: D1Database,
   data: {
     ticketId: number;
-    label: string;
     value: string;
     createdBy: number;
     messageId?: number | null;
@@ -76,13 +74,12 @@ export async function createSecureKey(
   
   const result = await db
     .prepare(`
-      INSERT INTO secure_keys (ticket_id, label, encrypted_value, iv, created_by, message_id) 
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO secure_keys (ticket_id, encrypted_value, iv, created_by, message_id) 
+      VALUES (?, ?, ?, ?, ?)
       RETURNING id
     `)
     .bind(
       data.ticketId,
-      data.label,
       encrypted, 
       iv, 
       data.createdBy, 
@@ -123,12 +120,11 @@ export async function logSecureKeyDeletion(
   db: D1Database,
   ticketId: number,
   userId: number,
-  userName: string,
-  keyLabel: string
+  userName: string
 ): Promise<void> {
   await db
     .prepare('INSERT INTO messages (ticket_id, user_id, content, is_internal) VALUES (?, ?, ?, 1)')
-    .bind(ticketId, userId, `🗑️ ${userName} eliminó la clave segura: "${keyLabel}"`)
+    .bind(ticketId, userId, `🗑️ ${userName} eliminó una clave segura del ticket.`)
     .run();
 }
 
@@ -139,11 +135,10 @@ export async function logSecureKeyCreation(
   db: D1Database,
   ticketId: number,
   userId: number,
-  userName: string,
-  keyLabel: string
+  userName: string
 ): Promise<void> {
   await db
     .prepare('INSERT INTO messages (ticket_id, user_id, content, is_internal) VALUES (?, ?, ?, 1)')
-    .bind(ticketId, userId, `🔐 ${userName} añadió una clave segura: "${keyLabel}"`)
+    .bind(ticketId, userId, `🔐 ${userName} añadió una clave segura al ticket.`)
     .run();
 }
