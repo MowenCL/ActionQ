@@ -58,24 +58,44 @@ export async function setSystemConfig(
 /**
  * Guarda la zona horaria del sistema
  */
-export async function setTimezone(db: D1Database, timezone: string): Promise<void> {
+export async function setTimezone(
+  db: D1Database, 
+  timezone: string
+): Promise<{ success: boolean; error?: string }> {
+  if (!timezone) {
+    return { success: false, error: 'Zona horaria requerida' };
+  }
+  
   // Validar que la zona horaria sea válida
   try {
     new Date().toLocaleString('es-ES', { timeZone: timezone });
   } catch {
-    throw new Error('Zona horaria inválida');
+    return { success: false, error: 'Zona horaria inválida' };
   }
   
-  await setSystemConfig(db, 'timezone', timezone);
+  try {
+    await setSystemConfig(db, 'timezone', timezone);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: 'Error al guardar en la base de datos' };
+  }
 }
 
 /**
  * Guarda el tiempo de inactividad de sesión
  */
-export async function setSessionTimeout(db: D1Database, minutes: number): Promise<void> {
-  if (minutes < 1 || minutes > 480) {
-    throw new Error('Tiempo de inactividad inválido (1-480 minutos)');
+export async function setSessionTimeout(
+  db: D1Database, 
+  minutes: number
+): Promise<{ success: boolean; error?: string }> {
+  if (!minutes || isNaN(minutes) || minutes < 1 || minutes > 480) {
+    return { success: false, error: 'Tiempo de inactividad inválido (1-480 minutos)' };
   }
   
-  await setSystemConfig(db, 'session_timeout_minutes', minutes.toString());
+  try {
+    await setSystemConfig(db, 'session_timeout_minutes', minutes.toString());
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: 'Error al guardar en la base de datos' };
+  }
 }
