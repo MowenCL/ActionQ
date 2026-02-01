@@ -23,9 +23,10 @@ export type Bindings = {
   ADMIN_INIT_PASSWORD: string;
   
   // Secretos de ZeptoMail (configurados con `wrangler secret put`)
-  ZEPTOMAIL_TOKEN?: string;
-  ZEPTOMAIL_FROM_EMAIL?: string;
-  ZEPTOMAIL_FROM_NAME?: string;
+  ZEPTOMAIL_TOKEN?: string;          // Token de envío de correo
+  ZEPTOMAIL_FROM_EMAIL?: string;     // Dirección de remitente
+  ZEPTOMAIL_FROM_NAME?: string;      // Nombre del remitente
+  ZEPTOMAIL_BOUNCE_ADDRESS?: string; // Agent Alias (bounce address)
   
   // Variables de entorno (configuradas en wrangler.toml [vars])
   APP_NAME: string;

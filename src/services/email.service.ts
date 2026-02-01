@@ -10,9 +10,10 @@
 // ================================================
 
 export interface EmailConfig {
-  apiToken: string;
-  fromEmail: string;
-  fromName: string;
+  apiToken: string;        // Token de envío de correo
+  fromEmail: string;       // Dirección de remitente (ej: noreply@tudominio.com)
+  fromName: string;        // Nombre del remitente
+  bounceAddress: string;   // Agent Alias / Bounce Address (ej: bounce@bounce.tudominio.com)
   replyTo?: string;
 }
 
@@ -70,6 +71,8 @@ export async function sendEmail(
   
   try {
     const payload = {
+      // Bounce address (Agent Alias) - requerido por ZeptoMail
+      bounce_address: config.bounceAddress,
       from: {
         address: config.fromEmail,
         name: config.fromName
@@ -425,17 +428,25 @@ function truncateText(text: string, maxLength: number): string {
 
 /**
  * Obtiene la configuración de email desde los bindings
+ * 
+ * Configurar secretos en Cloudflare:
+ *   npx wrangler secret put ZEPTOMAIL_TOKEN          # Token de envío de correo
+ *   npx wrangler secret put ZEPTOMAIL_FROM_EMAIL     # Dirección de remitente (ej: noreply@tudominio.com)
+ *   npx wrangler secret put ZEPTOMAIL_FROM_NAME      # Nombre del remitente
+ *   npx wrangler secret put ZEPTOMAIL_BOUNCE_ADDRESS # Agent Alias (ej: bounce@bounce.tudominio.com)
  */
 export function getEmailConfig(env: {
   ZEPTOMAIL_TOKEN?: string;
   ZEPTOMAIL_FROM_EMAIL?: string;
   ZEPTOMAIL_FROM_NAME?: string;
+  ZEPTOMAIL_BOUNCE_ADDRESS?: string;
   APP_NAME?: string;
 }): EmailConfig {
   return {
     apiToken: env.ZEPTOMAIL_TOKEN || 'not-configured',
     fromEmail: env.ZEPTOMAIL_FROM_EMAIL || 'noreply@example.com',
     fromName: env.ZEPTOMAIL_FROM_NAME || env.APP_NAME || 'ActionQ',
+    bounceAddress: env.ZEPTOMAIL_BOUNCE_ADDRESS || '',
     replyTo: env.ZEPTOMAIL_FROM_EMAIL
   };
 }
