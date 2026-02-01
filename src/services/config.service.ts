@@ -151,12 +151,12 @@ export async function setAutoAssignEnabled(
  */
 export async function getAvailableAgent(db: D1Database): Promise<{ id: number; active_tickets: number } | null> {
   try {
-    // Buscar agente con menos tickets activos (no cerrados)
+    // Buscar agente con menos tickets activos (no cerrados) - solo rol 'agent'
     const result = await db.prepare(`
       SELECT u.id, COUNT(t.id) as active_tickets
       FROM users u
       LEFT JOIN tickets t ON t.assigned_to = u.id AND t.status NOT IN ('closed')
-      WHERE u.role IN ('super_admin', 'agent_admin', 'agent')
+      WHERE u.role = 'agent'
         AND u.is_active = 1
       GROUP BY u.id
       ORDER BY active_tickets ASC, u.id ASC
