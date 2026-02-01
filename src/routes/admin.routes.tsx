@@ -167,6 +167,12 @@ adminRoutes.get('/admin', requireAdmin, async (c) => {
           >
             👤 Nuevo Usuario
           </a>
+          <a 
+            href="/admin/metrics" 
+            class="inline-flex items-center px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700"
+          >
+            📊 Métricas de Agentes
+          </a>
           {user.role === 'super_admin' && (
             <a 
               href="/admin/tenants/new" 
@@ -1377,6 +1383,308 @@ adminRoutes.post('/admin/tenants/:tenantId/domains/remove', requireAdmin, async 
     console.error('Remove domain error:', error);
     return c.text('Error al eliminar dominio', 500);
   }
+});
+
+// ================================================
+// MÉTRICAS DE AGENTES (super_admin y agent_admin)
+// ================================================
+
+/**
+ * GET /admin/metrics - Página de métricas y rendimiento de agentes
+ */
+adminRoutes.get('/admin/metrics', requireAgentManager, async (c) => {
+  const user = c.get('user')!;
+  const db = c.env.DB;
+  const timezone = c.get('timezone');
+  
+  // 1. Tiempo promedio de resolución (tickets resueltos o cerrados)
+  const avgResolutionResult = await db.prepare(`
+    SELECT 
+      AVG(
+        (julianday(updated_at) - julianday(created_at)) * 24
+      ) as avg_hours
+    FROM tickets 
+    WHERE status IN ('resolved', 'closed')
+      AND assigned_to IS NOT NULL
+  `).first<{ avg_hours: number | null }>();
+  
+  const avgResolutionHours = avgResolutionResult?.avg_hours || 0;
+  
+  // Formatear tiempo promedio
+  let avgResolutionFormatted: string;
+  if (avgResolutionHours < 1) {
+    avgResolutionFormatted = `${Math.round(avgResolutionHours * 60)} min`;
+  } else if (avgResolutionHours < 24) {
+    avgResolutionFormatted = `${avgResolutionHours.toFixed(1)} horas`;
+  } else {
+    avgResolutionFormatted = `${(avgResolutionHours / 24).toFixed(1)} días`;
+  }
+  
+  // 2. Top 5 agentes por tickets resueltos
+  const topAgentsByResolvedResult = await db.prepare(`
+    SELECT 
+      u.id,
+      u.name,
+      u.email,
+      COUNT(t.id) as tickets_resolved,
+      AVG((julianday(t.updated_at) - julianday(t.created_at)) * 24) as avg_resolution_hours
+    FROM users u
+    INNER JOIN tickets t ON t.assigned_to = u.id
+    WHERE t.status IN ('resolved', 'closed')
+      AND u.role IN ('super_admin', 'agent_admin', 'agent')
+    GROUP BY u.id
+    ORDER BY tickets_resolved DESC, avg_resolution_hours ASC
+    LIMIT 5
+  `).all<{
+    id: number;
+    name: string;
+    email: string;
+    tickets_resolved: number;
+    avg_resolution_hours: number;
+  }>();
+  
+  const topAgentsByResolved = topAgentsByResolvedResult.results || [];
+  
+  // 3. Top 5 agentes por eficiencia (mejor ratio tickets/tiempo)
+  const topAgentsByEfficiencyResult = await db.prepare(`
+    SELECT 
+      u.id,
+      u.name,
+      u.email,
+      COUNT(t.id) as tickets_resolved,
+      AVG((julianday(t.updated_at) - julianday(t.created_at)) * 24) as avg_resolution_hours,
+      CASE 
+        WHEN AVG((julianday(t.updated_at) - julianday(t.created_at)) * 24) > 0 
+        THEN COUNT(t.id) / AVG((julianday(t.updated_at) - julianday(t.created_at)) * 24)
+        ELSE 0 
+      END as efficiency_score
+    FROM users u
+    INNER JOIN tickets t ON t.assigned_to = u.id
+    WHERE t.status IN ('resolved', 'closed')
+      AND u.role IN ('super_admin', 'agent_admin', 'agent')
+    GROUP BY u.id
+    HAVING tickets_resolved >= 1
+    ORDER BY efficiency_score DESC
+    LIMIT 5
+  `).all<{
+    id: number;
+    name: string;
+    email: string;
+    tickets_resolved: number;
+    avg_resolution_hours: number;
+    efficiency_score: number;
+  }>();
+  
+  const topAgentsByEfficiency = topAgentsByEfficiencyResult.results || [];
+  
+  // 4. Estadísticas generales
+  const statsResult = await db.prepare(`
+    SELECT 
+      COUNT(*) as total_tickets,
+      SUM(CASE WHEN status IN ('resolved', 'closed') THEN 1 ELSE 0 END) as resolved_tickets,
+      SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_tickets,
+      SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_tickets
+    FROM tickets
+  `).first<{
+    total_tickets: number;
+    resolved_tickets: number;
+    open_tickets: number;
+    in_progress_tickets: number;
+  }>();
+  
+  const stats = {
+    total: statsResult?.total_tickets || 0,
+    resolved: statsResult?.resolved_tickets || 0,
+    open: statsResult?.open_tickets || 0,
+    inProgress: statsResult?.in_progress_tickets || 0,
+  };
+  
+  // 5. Tickets sin asignar
+  const unassignedResult = await db.prepare(`
+    SELECT COUNT(*) as count FROM tickets WHERE assigned_to IS NULL AND status NOT IN ('resolved', 'closed')
+  `).first<{ count: number }>();
+  
+  const unassignedTickets = unassignedResult?.count || 0;
+  
+  // Helper para formatear horas
+  const formatHours = (hours: number): string => {
+    if (hours < 1) return `${Math.round(hours * 60)} min`;
+    if (hours < 24) return `${hours.toFixed(1)}h`;
+    return `${(hours / 24).toFixed(1)}d`;
+  };
+  
+  return c.html(
+    <Layout title="Métricas de Agentes" user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
+      <div class="space-y-6">
+        <div class="flex items-center justify-between">
+          <h1 class="text-2xl font-bold text-gray-900">📊 Métricas de Agentes</h1>
+          <a href="/admin" class="text-sm text-blue-600 hover:text-blue-700">
+            ← Volver al panel
+          </a>
+        </div>
+        
+        {/* Estadísticas generales */}
+        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
+          <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center justify-between">
+              <span class="text-2xl">📊</span>
+              <span class="text-3xl font-bold text-gray-900">{stats.total}</span>
+            </div>
+            <p class="mt-2 text-sm font-medium text-gray-600">Total Tickets</p>
+          </div>
+          <div class="bg-blue-50 rounded-lg shadow p-6">
+            <div class="flex items-center justify-between">
+              <span class="text-2xl">📬</span>
+              <span class="text-3xl font-bold text-blue-600">{stats.open}</span>
+            </div>
+            <p class="mt-2 text-sm font-medium text-gray-600">Abiertos</p>
+          </div>
+          <div class="bg-yellow-50 rounded-lg shadow p-6">
+            <div class="flex items-center justify-between">
+              <span class="text-2xl">⏳</span>
+              <span class="text-3xl font-bold text-yellow-600">{stats.inProgress}</span>
+            </div>
+            <p class="mt-2 text-sm font-medium text-gray-600">En Progreso</p>
+          </div>
+          <div class="bg-green-50 rounded-lg shadow p-6">
+            <div class="flex items-center justify-between">
+              <span class="text-2xl">✅</span>
+              <span class="text-3xl font-bold text-green-600">{stats.resolved}</span>
+            </div>
+            <p class="mt-2 text-sm font-medium text-gray-600">Resueltos</p>
+          </div>
+          <div class="bg-red-50 rounded-lg shadow p-6">
+            <div class="flex items-center justify-between">
+              <span class="text-2xl">⚠️</span>
+              <span class="text-3xl font-bold text-red-600">{unassignedTickets}</span>
+            </div>
+            <p class="mt-2 text-sm font-medium text-gray-600">Sin Asignar</p>
+          </div>
+        </div>
+        
+        {/* Tiempo promedio de resolución */}
+        <div class="bg-white rounded-lg shadow p-6">
+          <div class="flex items-center space-x-4">
+            <div class="flex-shrink-0">
+              <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center">
+                <span class="text-3xl">⏱️</span>
+              </div>
+            </div>
+            <div>
+              <p class="text-sm font-medium text-gray-500">Tiempo Promedio de Resolución</p>
+              <p class="text-3xl font-bold text-indigo-600">{avgResolutionFormatted}</p>
+              <p class="text-xs text-gray-400 mt-1">
+                Calculado sobre {stats.resolved} tickets resueltos
+              </p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Top 5 por tickets resueltos */}
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+              <h2 class="text-lg font-semibold text-gray-900">🏆 Top 5 - Tickets Resueltos</h2>
+              <p class="text-sm text-gray-500">Agentes con más tickets cerrados</p>
+            </div>
+            
+            {topAgentsByResolved.length > 0 ? (
+              <ul class="divide-y divide-gray-200">
+                {topAgentsByResolved.map((agent, index) => (
+                  <li key={agent.id} class="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
+                    <div class="flex items-center space-x-3">
+                      <span class={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
+                        index === 0 ? 'bg-yellow-500' :
+                        index === 1 ? 'bg-gray-400' :
+                        index === 2 ? 'bg-amber-600' :
+                        'bg-gray-300'
+                      }`}>
+                        {index + 1}
+                      </span>
+                      <div>
+                        <p class="font-medium text-gray-900">{agent.name}</p>
+                        <p class="text-sm text-gray-500">{agent.email}</p>
+                      </div>
+                    </div>
+                    <div class="text-right">
+                      <p class="text-lg font-bold text-green-600">{agent.tickets_resolved}</p>
+                      <p class="text-xs text-gray-500">
+                        ~{formatHours(agent.avg_resolution_hours)} prom.
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div class="px-6 py-12 text-center text-gray-500">
+                <span class="text-4xl">📭</span>
+                <p class="mt-2">No hay datos de tickets resueltos</p>
+              </div>
+            )}
+          </div>
+          
+          {/* Top 5 por eficiencia */}
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+              <h2 class="text-lg font-semibold text-gray-900">⚡ Top 5 - Eficiencia</h2>
+              <p class="text-sm text-gray-500">Mejor ratio tickets/tiempo de resolución</p>
+            </div>
+            
+            {topAgentsByEfficiency.length > 0 ? (
+              <ul class="divide-y divide-gray-200">
+                {topAgentsByEfficiency.map((agent, index) => (
+                  <li key={agent.id} class="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
+                    <div class="flex items-center space-x-3">
+                      <span class={`w-8 h-8 rounded-full flex items-center justify-center text-white font-bold ${
+                        index === 0 ? 'bg-yellow-500' :
+                        index === 1 ? 'bg-gray-400' :
+                        index === 2 ? 'bg-amber-600' :
+                        'bg-gray-300'
+                      }`}>
+                        {index + 1}
+                      </span>
+                      <div>
+                        <p class="font-medium text-gray-900">{agent.name}</p>
+                        <p class="text-sm text-gray-500">{agent.email}</p>
+                      </div>
+                    </div>
+                    <div class="text-right">
+                      <p class="text-lg font-bold text-indigo-600">
+                        {agent.efficiency_score.toFixed(2)}
+                      </p>
+                      <p class="text-xs text-gray-500">
+                        {agent.tickets_resolved} tickets • {formatHours(agent.avg_resolution_hours)}
+                      </p>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <div class="px-6 py-12 text-center text-gray-500">
+                <span class="text-4xl">📭</span>
+                <p class="mt-2">No hay datos de eficiencia</p>
+              </div>
+            )}
+          </div>
+        </div>
+        
+        {/* Nota explicativa */}
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+          <div class="flex">
+            <span class="text-blue-500 text-xl mr-3">ℹ️</span>
+            <div class="text-sm text-blue-700">
+              <p class="font-medium">¿Cómo se calculan las métricas?</p>
+              <ul class="mt-1 list-disc list-inside space-y-1">
+                <li><strong>Tiempo de resolución:</strong> Diferencia entre fecha de creación y última actualización del ticket</li>
+                <li><strong>Eficiencia:</strong> Tickets resueltos dividido por tiempo promedio de resolución (mayor es mejor)</li>
+                <li>Solo se consideran tickets con estado "Resuelto" o "Cerrado" asignados a un agente</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Layout>
+  );
 });
 
 // ================================================
