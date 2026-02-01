@@ -14,8 +14,7 @@
 export const TICKET_STATUS_LABELS: Record<string, string> = {
   'open': 'Abierto',
   'in_progress': 'En Progreso',
-  'pending': 'Validando',
-  'resolved': 'Resuelto',
+  'pending': 'Esperando respuesta',
   'closed': 'Cerrado'
 };
 
@@ -26,7 +25,6 @@ export const TICKET_STATUS_COLORS: Record<string, string> = {
   'open': 'bg-blue-100 text-blue-800',
   'in_progress': 'bg-yellow-100 text-yellow-800',
   'pending': 'bg-purple-100 text-purple-800',
-  'resolved': 'bg-green-100 text-green-800',
   'closed': 'bg-gray-100 text-gray-800'
 };
 

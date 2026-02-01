@@ -52,7 +52,7 @@ export async function getTicketById(db: D1Database, ticketId: number): Promise<T
 }
 
 /**
- * Obtiene tickets activos (no cerrados ni resueltos) para el equipo interno
+ * Obtiene tickets activos (no cerrados) para el equipo interno
  */
 export async function getActiveTicketsForInternalTeam(
   db: D1Database
@@ -63,7 +63,7 @@ export async function getActiveTicketsForInternalTeam(
     LEFT JOIN users u ON t.created_by = u.id 
     LEFT JOIN tenants ten ON t.tenant_id = ten.id 
     LEFT JOIN users agent ON t.assigned_to = agent.id 
-    WHERE t.status NOT IN ('closed', 'resolved')
+    WHERE t.status NOT IN ('closed')
     ORDER BY ${PRIORITY_ORDER_SQL}, t.created_at DESC
   `).all<TicketWithDetails>();
   
@@ -83,7 +83,7 @@ export async function getActiveTicketsForTenant(
     LEFT JOIN users u ON t.created_by = u.id 
     LEFT JOIN tenants ten ON t.tenant_id = ten.id 
     LEFT JOIN users agent ON t.assigned_to = agent.id 
-    WHERE t.tenant_id = ? AND t.status NOT IN ('closed', 'resolved')
+    WHERE t.tenant_id = ? AND t.status NOT IN ('closed')
     ORDER BY ${PRIORITY_ORDER_SQL}, t.created_at DESC
   `).bind(tenantId).all<TicketWithDetails>();
   
@@ -103,7 +103,7 @@ export async function getActiveTicketsForUser(
     LEFT JOIN tenants ten ON t.tenant_id = ten.id 
     LEFT JOIN users agent ON t.assigned_to = agent.id 
     LEFT JOIN ticket_participants tp ON t.id = tp.ticket_id
-    WHERE (t.created_by = ? OR tp.user_id = ?) AND t.status NOT IN ('closed', 'resolved')
+    WHERE (t.created_by = ? OR tp.user_id = ?) AND t.status NOT IN ('closed')
     ORDER BY ${PRIORITY_ORDER_SQL}, t.created_at DESC
   `).bind(userId, userId).all<TicketWithDetails>();
   
@@ -111,7 +111,7 @@ export async function getActiveTicketsForUser(
 }
 
 /**
- * Obtiene tickets cerrados/resueltos para el equipo interno
+ * Obtiene tickets cerrados para el equipo interno
  */
 export async function getClosedTicketsForInternalTeam(
   db: D1Database
@@ -122,7 +122,7 @@ export async function getClosedTicketsForInternalTeam(
     LEFT JOIN users u ON t.created_by = u.id 
     LEFT JOIN tenants ten ON t.tenant_id = ten.id 
     LEFT JOIN users agent ON t.assigned_to = agent.id 
-    WHERE t.status IN ('closed', 'resolved')
+    WHERE t.status = 'closed'
     ORDER BY t.updated_at DESC
   `).all<TicketWithDetails>();
   
@@ -130,7 +130,7 @@ export async function getClosedTicketsForInternalTeam(
 }
 
 /**
- * Obtiene tickets cerrados/resueltos para una organización
+ * Obtiene tickets cerrados para una organización
  */
 export async function getClosedTicketsForTenant(
   db: D1Database, 
@@ -142,7 +142,7 @@ export async function getClosedTicketsForTenant(
     LEFT JOIN users u ON t.created_by = u.id 
     LEFT JOIN tenants ten ON t.tenant_id = ten.id 
     LEFT JOIN users agent ON t.assigned_to = agent.id 
-    WHERE t.tenant_id = ? AND t.status IN ('closed', 'resolved')
+    WHERE t.tenant_id = ? AND t.status = 'closed'
     ORDER BY t.updated_at DESC
   `).bind(tenantId).all<TicketWithDetails>();
   
@@ -150,7 +150,7 @@ export async function getClosedTicketsForTenant(
 }
 
 /**
- * Obtiene tickets cerrados/resueltos para un usuario
+ * Obtiene tickets cerrados para un usuario
  */
 export async function getClosedTicketsForUser(
   db: D1Database, 
@@ -162,7 +162,7 @@ export async function getClosedTicketsForUser(
     LEFT JOIN tenants ten ON t.tenant_id = ten.id 
     LEFT JOIN users agent ON t.assigned_to = agent.id 
     LEFT JOIN ticket_participants tp ON t.id = tp.ticket_id
-    WHERE (t.created_by = ? OR tp.user_id = ?) AND t.status IN ('closed', 'resolved')
+    WHERE (t.created_by = ? OR tp.user_id = ?) AND t.status = 'closed'
     ORDER BY t.updated_at DESC
   `).bind(userId, userId).all<TicketWithDetails>();
   

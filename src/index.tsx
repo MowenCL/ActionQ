@@ -180,7 +180,7 @@ app.get('/dashboard', requireAuth, async (c) => {
     totalTickets: Object.values(statusCounts).reduce((a, b) => a + b, 0),
     openTickets: statusCounts['open'] || 0,
     inProgressTickets: statusCounts['in_progress'] || 0,
-    resolvedTickets: (statusCounts['resolved'] || 0) + (statusCounts['closed'] || 0),
+    resolvedTickets: (statusCounts['pending'] || 0) + (statusCounts['closed'] || 0),
   };
   
   // Obtener tickets actualizados recientemente con info de última actividad
@@ -230,7 +230,77 @@ app.get('/dashboard', requireAuth, async (c) => {
 });
 
 // ================================================
+// SCHEDULED HANDLER (Cron Trigger)
+// ================================================
+
+/**
+ * Ejecuta tareas programadas (auto-resolver tickets en "pending")
+ */
+async function handleScheduled(event: ScheduledEvent, env: AppEnv['Bindings']) {
+  console.log('[Scheduled] Running auto-resolve task at', new Date().toISOString());
+  
+  try {
+    // Obtener configuración de días para auto-resolver
+    const config = await getSystemConfig(env.DB);
+    const days = config.pendingAutoResolveDays;
+    
+    // Calcular fecha límite (tickets actualizados antes de esta fecha serán cerrados)
+    const cutoffDate = new Date();
+    cutoffDate.setDate(cutoffDate.getDate() - days);
+    const cutoffISO = cutoffDate.toISOString();
+    
+    console.log(`[Scheduled] Auto-closing tickets in "pending" status not updated since ${cutoffISO}`);
+    
+    // Buscar tickets en estado "pending" que no han sido actualizados en X días
+    const ticketsToResolve = await env.DB.prepare(`
+      SELECT id, subject FROM tickets 
+      WHERE status = 'pending' AND updated_at < ?
+    `).bind(cutoffISO).all<{ id: number; subject: string }>();
+    
+    const tickets = ticketsToResolve.results || [];
+    
+    if (tickets.length === 0) {
+      console.log('[Scheduled] No tickets to auto-close');
+      return;
+    }
+    
+    console.log(`[Scheduled] Found ${tickets.length} tickets to auto-close`);
+    
+    // Resolver cada ticket
+    const now = new Date().toISOString();
+    for (const ticket of tickets) {
+      // Actualizar estado del ticket a cerrado
+      await env.DB.prepare(`
+        UPDATE tickets 
+        SET status = 'closed', updated_at = ? 
+        WHERE id = ?
+      `).bind(now, ticket.id).run();
+      
+      // Añadir mensaje automático
+      await env.DB.prepare(`
+        INSERT INTO messages (ticket_id, user_id, content, is_internal, created_at)
+        VALUES (?, NULL, ?, 0, ?)
+      `).bind(
+        ticket.id,
+        `🤖 **Ticket cerrado automáticamente**\n\nEste ticket fue cerrado automáticamente después de ${days} días sin respuesta.\n\nSi aún necesitas ayuda, por favor crea un nuevo ticket.`,
+        now
+      ).run();
+      
+      console.log(`[Scheduled] Auto-closed ticket #${ticket.id}: ${ticket.subject}`);
+    }
+    
+    console.log(`[Scheduled] Successfully auto-closed ${tickets.length} tickets`);
+    
+  } catch (error) {
+    console.error('[Scheduled] Error in auto-resolve task:', error);
+  }
+}
+
+// ================================================
 // EXPORTAR APP
 // ================================================
 
-export default app;
+export default {
+  fetch: app.fetch,
+  scheduled: handleScheduled
+};

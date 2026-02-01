@@ -310,8 +310,8 @@ const getActivityDescription = (ticket: RecentTicket): string => {
   if (ticket.status === 'in_progress') {
     return 'En progreso';
   }
-  if (ticket.status === 'resolved') {
-    return 'Resuelto';
+  if (ticket.status === 'pending') {
+    return 'Esperando respuesta';
   }
   if (ticket.status === 'closed') {
     return 'Cerrado';
@@ -353,7 +353,7 @@ export const DashboardPage: FC<DashboardPageProps> = ({ user, stats, recentTicke
           color="yellow"
         />
         <StatCard 
-          title="Resueltos" 
+          title="Cerrados" 
           value={stats.resolvedTickets} 
           icon="✅" 
           color="green"
@@ -445,8 +445,7 @@ const StatusBadge: FC<StatusBadgeProps> = ({ status }) => {
   const statusConfig: Record<string, { label: string; class: string }> = {
     open: { label: 'Abierto', class: 'bg-blue-100 text-blue-800' },
     in_progress: { label: 'En Progreso', class: 'bg-yellow-100 text-yellow-800' },
-    pending: { label: 'Pendiente', class: 'bg-orange-100 text-orange-800' },
-    resolved: { label: 'Resuelto', class: 'bg-green-100 text-green-800' },
+    pending: { label: 'Esperando', class: 'bg-purple-100 text-purple-800' },
     closed: { label: 'Cerrado', class: 'bg-gray-100 text-gray-800' },
   };
   

@@ -84,6 +84,11 @@ export const Layout: FC<PropsWithChildren<LayoutProps>> = ({
                         Administración
                       </a>
                     )}
+                    {(user.role === 'super_admin' || user.role === 'agent_admin' || user.role === 'agent') && (
+                      <a href="/admin/metrics" class="text-gray-600 hover:text-gray-900 px-3 py-2 rounded-md text-sm font-medium">
+                        Métricas
+                      </a>
+                    )}
                   </div>
                 )}
                 

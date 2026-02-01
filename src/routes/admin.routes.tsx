@@ -23,7 +23,9 @@ import {
 import { 
   getSystemConfig, 
   setTimezone, 
-  setSessionTimeout 
+  setSessionTimeout,
+  setPendingAutoResolveDays,
+  setAutoAssignEnabled
 } from '../services/config.service';
 
 const adminRoutes = new Hono<AppEnv>();
@@ -166,12 +168,6 @@ adminRoutes.get('/admin', requireAdmin, async (c) => {
             class="inline-flex items-center px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
           >
             👤 Nuevo Usuario
-          </a>
-          <a 
-            href="/admin/metrics" 
-            class="inline-flex items-center px-4 py-2 bg-indigo-600 text-white font-medium rounded-lg hover:bg-indigo-700"
-          >
-            📊 Métricas de Agentes
           </a>
           {user.role === 'super_admin' && (
             <a 
@@ -1397,15 +1393,53 @@ adminRoutes.get('/admin/metrics', requireAgentManager, async (c) => {
   const db = c.env.DB;
   const timezone = c.get('timezone');
   
-  // 1. Tiempo promedio de resolución (tickets resueltos o cerrados)
+  // Obtener parámetros de filtro de mes
+  const url = new URL(c.req.url);
+  const monthParam = url.searchParams.get('month'); // formato: YYYY-MM
+  
+  // Calcular rango de fechas si hay filtro de mes
+  let dateFilter = '';
+  let dateFilterLabel = 'Todo el tiempo';
+  let selectedMonth = '';
+  
+  if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+    selectedMonth = monthParam;
+    const [year, month] = monthParam.split('-').map(Number);
+    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+    // Calcular último día del mes
+    const lastDay = new Date(year, month, 0).getDate();
+    const endDate = `${year}-${String(month).padStart(2, '0')}-${lastDay} 23:59:59`;
+    dateFilter = `AND t.created_at >= '${startDate}' AND t.created_at <= '${endDate}'`;
+    
+    // Formatear etiqueta del mes
+    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+                        'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+    dateFilterLabel = `${monthNames[month - 1]} ${year}`;
+  }
+  
+  // Generar lista de meses disponibles (últimos 12 meses)
+  const availableMonths: { value: string; label: string }[] = [];
+  const now = new Date();
+  const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 
+                      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  
+  for (let i = 0; i < 12; i++) {
+    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const value = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    const label = `${monthNames[date.getMonth()]} ${date.getFullYear()}`;
+    availableMonths.push({ value, label });
+  }
+  
+  // 1. Tiempo promedio de resolución (tickets cerrados o esperando respuesta)
   const avgResolutionResult = await db.prepare(`
     SELECT 
       AVG(
-        (julianday(updated_at) - julianday(created_at)) * 24
+        (julianday(t.updated_at) - julianday(t.created_at)) * 24
       ) as avg_hours
-    FROM tickets 
-    WHERE status IN ('resolved', 'closed')
-      AND assigned_to IS NOT NULL
+    FROM tickets t
+    WHERE t.status IN ('closed', 'pending')
+      AND t.assigned_to IS NOT NULL
+      ${dateFilter}
   `).first<{ avg_hours: number | null }>();
   
   const avgResolutionHours = avgResolutionResult?.avg_hours || 0;
@@ -1420,7 +1454,7 @@ adminRoutes.get('/admin/metrics', requireAgentManager, async (c) => {
     avgResolutionFormatted = `${(avgResolutionHours / 24).toFixed(1)} días`;
   }
   
-  // 2. Top 5 agentes por tickets resueltos
+  // 2. Top 5 agentes por tickets cerrados
   const topAgentsByResolvedResult = await db.prepare(`
     SELECT 
       u.id,
@@ -1430,8 +1464,9 @@ adminRoutes.get('/admin/metrics', requireAgentManager, async (c) => {
       AVG((julianday(t.updated_at) - julianday(t.created_at)) * 24) as avg_resolution_hours
     FROM users u
     INNER JOIN tickets t ON t.assigned_to = u.id
-    WHERE t.status IN ('resolved', 'closed')
+    WHERE t.status IN ('closed', 'pending')
       AND u.role IN ('super_admin', 'agent_admin', 'agent')
+      ${dateFilter}
     GROUP BY u.id
     ORDER BY tickets_resolved DESC, avg_resolution_hours ASC
     LIMIT 5
@@ -1460,8 +1495,9 @@ adminRoutes.get('/admin/metrics', requireAgentManager, async (c) => {
       END as efficiency_score
     FROM users u
     INNER JOIN tickets t ON t.assigned_to = u.id
-    WHERE t.status IN ('resolved', 'closed')
+    WHERE t.status IN ('closed', 'pending')
       AND u.role IN ('super_admin', 'agent_admin', 'agent')
+      ${dateFilter}
     GROUP BY u.id
     HAVING tickets_resolved >= 1
     ORDER BY efficiency_score DESC
@@ -1478,18 +1514,36 @@ adminRoutes.get('/admin/metrics', requireAgentManager, async (c) => {
   const topAgentsByEfficiency = topAgentsByEfficiencyResult.results || [];
   
   // 4. Estadísticas generales
-  const statsResult = await db.prepare(`
-    SELECT 
-      COUNT(*) as total_tickets,
-      SUM(CASE WHEN status IN ('resolved', 'closed') THEN 1 ELSE 0 END) as resolved_tickets,
-      SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_tickets,
-      SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_tickets
-    FROM tickets
-  `).first<{
+  const statsQuery = dateFilter 
+    ? `
+      SELECT 
+        COUNT(*) as total_tickets,
+        SUM(CASE WHEN status IN ('closed', 'pending') THEN 1 ELSE 0 END) as resolved_tickets,
+        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_tickets,
+        SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_tickets,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_tickets,
+        SUM(CASE WHEN assigned_to IS NOT NULL THEN 1 ELSE 0 END) as assigned_tickets
+      FROM tickets t
+      WHERE 1=1 ${dateFilter}
+    `
+    : `
+      SELECT 
+        COUNT(*) as total_tickets,
+        SUM(CASE WHEN status IN ('closed', 'pending') THEN 1 ELSE 0 END) as resolved_tickets,
+        SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_tickets,
+        SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_tickets,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_tickets,
+        SUM(CASE WHEN assigned_to IS NOT NULL THEN 1 ELSE 0 END) as assigned_tickets
+      FROM tickets
+    `;
+  
+  const statsResult = await db.prepare(statsQuery).first<{
     total_tickets: number;
     resolved_tickets: number;
     open_tickets: number;
     in_progress_tickets: number;
+    pending_tickets: number;
+    assigned_tickets: number;
   }>();
   
   const stats = {
@@ -1497,11 +1551,18 @@ adminRoutes.get('/admin/metrics', requireAgentManager, async (c) => {
     resolved: statsResult?.resolved_tickets || 0,
     open: statsResult?.open_tickets || 0,
     inProgress: statsResult?.in_progress_tickets || 0,
+    pending: statsResult?.pending_tickets || 0,
+    assigned: statsResult?.assigned_tickets || 0,
   };
   
-  // 5. Tickets sin asignar
+  // Calcular ratio asignados/cerrados
+  const assignedResolvedRatio = stats.assigned > 0 
+    ? ((stats.resolved / stats.assigned) * 100).toFixed(1)
+    : '0';
+  
+  // 5. Tickets sin asignar (esto siempre muestra el estado actual, no filtrado por mes)
   const unassignedResult = await db.prepare(`
-    SELECT COUNT(*) as count FROM tickets WHERE assigned_to IS NULL AND status NOT IN ('resolved', 'closed')
+    SELECT COUNT(*) as count FROM tickets WHERE assigned_to IS NULL AND status NOT IN ('closed', 'pending')
   `).first<{ count: number }>();
   
   const unassignedTickets = unassignedResult?.count || 0;
@@ -1516,75 +1577,140 @@ adminRoutes.get('/admin/metrics', requireAgentManager, async (c) => {
   return c.html(
     <Layout title="Métricas de Agentes" user={user} sessionTimeoutMinutes={c.get('sessionTimeoutMinutes')}>
       <div class="space-y-6">
-        <div class="flex items-center justify-between">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <h1 class="text-2xl font-bold text-gray-900">📊 Métricas de Agentes</h1>
-          <a href="/admin" class="text-sm text-blue-600 hover:text-blue-700">
-            ← Volver al panel
-          </a>
+          <div class="flex items-center gap-4">
+            <a href="/admin" class="text-sm text-blue-600 hover:text-blue-700">
+              ← Volver al panel
+            </a>
+          </div>
+        </div>
+        
+        {/* Filtro de mes */}
+        <div class="bg-white rounded-lg shadow p-4">
+          <form method="get" action="/admin/metrics" class="flex flex-wrap items-center gap-4">
+            <label class="text-sm font-medium text-gray-700">
+              📅 Período:
+            </label>
+            <select 
+              name="month" 
+              class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              onchange="this.form.submit()"
+            >
+              <option value="">Todo el tiempo</option>
+              {availableMonths.map((m) => (
+                <option key={m.value} value={m.value} selected={selectedMonth === m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <noscript>
+              <button type="submit" class="px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700">
+                Filtrar
+              </button>
+            </noscript>
+            {selectedMonth && (
+              <a href="/admin/metrics" class="text-sm text-gray-500 hover:text-gray-700">
+                ✕ Limpiar filtro
+              </a>
+            )}
+            <span class="ml-auto text-sm text-gray-500">
+              Mostrando: <strong class="text-gray-700">{dateFilterLabel}</strong>
+            </span>
+          </form>
         </div>
         
         {/* Estadísticas generales */}
-        <div class="grid grid-cols-1 md:grid-cols-5 gap-4">
-          <div class="bg-white rounded-lg shadow p-6">
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+          <div class="bg-white rounded-lg shadow p-4">
             <div class="flex items-center justify-between">
-              <span class="text-2xl">📊</span>
-              <span class="text-3xl font-bold text-gray-900">{stats.total}</span>
+              <span class="text-xl">📊</span>
+              <span class="text-2xl font-bold text-gray-900">{stats.total}</span>
             </div>
-            <p class="mt-2 text-sm font-medium text-gray-600">Total Tickets</p>
+            <p class="mt-1 text-xs font-medium text-gray-600">Total</p>
           </div>
-          <div class="bg-blue-50 rounded-lg shadow p-6">
+          <div class="bg-blue-50 rounded-lg shadow p-4">
             <div class="flex items-center justify-between">
-              <span class="text-2xl">📬</span>
-              <span class="text-3xl font-bold text-blue-600">{stats.open}</span>
+              <span class="text-xl">📬</span>
+              <span class="text-2xl font-bold text-blue-600">{stats.open}</span>
             </div>
-            <p class="mt-2 text-sm font-medium text-gray-600">Abiertos</p>
+            <p class="mt-1 text-xs font-medium text-gray-600">Abiertos</p>
           </div>
-          <div class="bg-yellow-50 rounded-lg shadow p-6">
+          <div class="bg-yellow-50 rounded-lg shadow p-4">
             <div class="flex items-center justify-between">
-              <span class="text-2xl">⏳</span>
-              <span class="text-3xl font-bold text-yellow-600">{stats.inProgress}</span>
+              <span class="text-xl">⏳</span>
+              <span class="text-2xl font-bold text-yellow-600">{stats.inProgress}</span>
             </div>
-            <p class="mt-2 text-sm font-medium text-gray-600">En Progreso</p>
+            <p class="mt-1 text-xs font-medium text-gray-600">En Progreso</p>
           </div>
-          <div class="bg-green-50 rounded-lg shadow p-6">
+          <div class="bg-purple-50 rounded-lg shadow p-4">
             <div class="flex items-center justify-between">
-              <span class="text-2xl">✅</span>
-              <span class="text-3xl font-bold text-green-600">{stats.resolved}</span>
+              <span class="text-xl">⏸️</span>
+              <span class="text-2xl font-bold text-purple-600">{stats.pending}</span>
             </div>
-            <p class="mt-2 text-sm font-medium text-gray-600">Resueltos</p>
+            <p class="mt-1 text-xs font-medium text-gray-600">Esperando</p>
           </div>
-          <div class="bg-red-50 rounded-lg shadow p-6">
+          <div class="bg-green-50 rounded-lg shadow p-4">
             <div class="flex items-center justify-between">
-              <span class="text-2xl">⚠️</span>
-              <span class="text-3xl font-bold text-red-600">{unassignedTickets}</span>
+              <span class="text-xl">✅</span>
+              <span class="text-2xl font-bold text-green-600">{stats.resolved}</span>
             </div>
-            <p class="mt-2 text-sm font-medium text-gray-600">Sin Asignar</p>
+            <p class="mt-1 text-xs font-medium text-gray-600">Cerrados*</p>
+          </div>
+          <div class="bg-red-50 rounded-lg shadow p-4">
+            <div class="flex items-center justify-between">
+              <span class="text-xl">⚠️</span>
+              <span class="text-2xl font-bold text-red-600">{unassignedTickets}</span>
+            </div>
+            <p class="mt-1 text-xs font-medium text-gray-600">Sin Asignar</p>
+            {selectedMonth && <p class="text-xs text-gray-400">(actual)</p>}
           </div>
         </div>
         
-        {/* Tiempo promedio de resolución */}
-        <div class="bg-white rounded-lg shadow p-6">
-          <div class="flex items-center space-x-4">
-            <div class="flex-shrink-0">
-              <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center">
-                <span class="text-3xl">⏱️</span>
+        {/* Métricas clave: Tiempo promedio y Ratio */}
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Tiempo promedio de resolución */}
+          <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center space-x-4">
+              <div class="flex-shrink-0">
+                <div class="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center">
+                  <span class="text-3xl">⏱️</span>
+                </div>
+              </div>
+              <div>
+                <p class="text-sm font-medium text-gray-500">Tiempo Promedio de Cierre</p>
+                <p class="text-3xl font-bold text-indigo-600">{avgResolutionFormatted}</p>
+                <p class="text-xs text-gray-400 mt-1">
+                  Calculado sobre {stats.resolved} tickets cerrados
+                </p>
               </div>
             </div>
-            <div>
-              <p class="text-sm font-medium text-gray-500">Tiempo Promedio de Resolución</p>
-              <p class="text-3xl font-bold text-indigo-600">{avgResolutionFormatted}</p>
-              <p class="text-xs text-gray-400 mt-1">
-                Calculado sobre {stats.resolved} tickets resueltos
-              </p>
+          </div>
+          
+          {/* Ratio Asignados/Cerrados */}
+          <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center space-x-4">
+              <div class="flex-shrink-0">
+                <div class="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center">
+                  <span class="text-3xl">📈</span>
+                </div>
+              </div>
+              <div>
+                <p class="text-sm font-medium text-gray-500">Ratio Asignados → Cerrados</p>
+                <p class="text-3xl font-bold text-emerald-600">{assignedResolvedRatio}%</p>
+                <p class="text-xs text-gray-400 mt-1">
+                  {stats.resolved} cerrados de {stats.assigned} asignados
+                </p>
+              </div>
             </div>
           </div>
         </div>
         
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Top 5 por tickets resueltos */}
+          {/* Top 5 por tickets cerrados */}
           <div class="bg-white rounded-lg shadow">
             <div class="px-6 py-4 border-b border-gray-200">
-              <h2 class="text-lg font-semibold text-gray-900">🏆 Top 5 - Tickets Resueltos</h2>
+              <h2 class="text-lg font-semibold text-gray-900">🏆 Top 5 - Tickets Cerrados</h2>
               <p class="text-sm text-gray-500">Agentes con más tickets cerrados</p>
             </div>
             
@@ -1618,7 +1744,7 @@ adminRoutes.get('/admin/metrics', requireAgentManager, async (c) => {
             ) : (
               <div class="px-6 py-12 text-center text-gray-500">
                 <span class="text-4xl">📭</span>
-                <p class="mt-2">No hay datos de tickets resueltos</p>
+                <p class="mt-2">No hay datos de tickets cerrados</p>
               </div>
             )}
           </div>
@@ -1676,8 +1802,9 @@ adminRoutes.get('/admin/metrics', requireAgentManager, async (c) => {
               <p class="font-medium">¿Cómo se calculan las métricas?</p>
               <ul class="mt-1 list-disc list-inside space-y-1">
                 <li><strong>Tiempo de resolución:</strong> Diferencia entre fecha de creación y última actualización del ticket</li>
-                <li><strong>Eficiencia:</strong> Tickets resueltos dividido por tiempo promedio de resolución (mayor es mejor)</li>
-                <li>Solo se consideran tickets con estado "Resuelto" o "Cerrado" asignados a un agente</li>
+                <li><strong>Eficiencia:</strong> Tickets cerrados dividido por tiempo promedio de cierre (mayor es mejor)</li>
+                <li><strong>Ratio Asignados/Cerrados:</strong> Porcentaje de tickets asignados que han sido cerrados</li>
+                <li><strong>*Cerrados:</strong> Incluye tickets en "Esperando respuesta" y "Cerrado" (asignados a un agente)</li>
               </ul>
             </div>
           </div>
@@ -1706,6 +1833,8 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
   const config = await getSystemConfig(c.env.DB);
   const currentTimezone = config.timezone;
   const sessionTimeoutMinutes = config.sessionTimeoutMinutes;
+  const pendingAutoResolveDays = config.pendingAutoResolveDays;
+  const autoAssignEnabled = config.autoAssignEnabled;
   
   // Obtener hora actual en la zona horaria configurada
   const now = new Date();
@@ -1728,97 +1857,181 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
           <a href="/admin" class="text-blue-600 hover:text-blue-700">← Volver al Panel</a>
         </div>
         
-        {/* Zona Horaria */}
-        <div class="bg-white rounded-lg shadow">
-          <div class="px-6 py-4 border-b border-gray-200">
-            <h2 class="text-lg font-semibold text-gray-900">🕐 Zona Horaria</h2>
-            <p class="text-sm text-gray-500 mt-1">Configura la zona horaria para mostrar fechas y horas en el sistema.</p>
+        {/* Formulario General de Configuración */}
+        <form method="post" action="/admin/settings/save" class="space-y-6">
+          {/* Zona Horaria */}
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+              <h2 class="text-lg font-semibold text-gray-900">🕐 Zona Horaria</h2>
+              <p class="text-sm text-gray-500 mt-1">Configura la zona horaria para mostrar fechas y horas en el sistema.</p>
+            </div>
+            
+            <div class="p-6">
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    Zona Horaria Actual
+                  </label>
+                  <select 
+                    name="timezone" 
+                    class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {TIMEZONES.map((tz) => (
+                      <option 
+                        key={tz.value} 
+                        value={tz.value} 
+                        selected={tz.value === currentTimezone}
+                      >
+                        {tz.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div class="bg-gray-50 rounded-lg p-4">
+                  <p class="text-sm text-gray-600">
+                    <strong>Hora actual en {currentTimezone}:</strong>
+                  </p>
+                  <p class="text-lg font-medium text-gray-900 mt-1">{currentTimeInTz}</p>
+                </div>
+              </div>
+            </div>
           </div>
           
-          <div class="p-6">
-            <form method="post" action="/admin/settings/timezone" class="space-y-4">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-2">
-                  Zona Horaria Actual
-                </label>
-                <select 
-                  name="timezone" 
-                  class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  {TIMEZONES.map((tz) => (
-                    <option 
-                      key={tz.value} 
-                      value={tz.value} 
-                      selected={tz.value === currentTimezone}
-                    >
-                      {tz.label}
-                    </option>
-                  ))}
-                </select>
+          {/* Timeout de Sesión */}
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+              <h2 class="text-lg font-semibold text-gray-900">⏱️ Tiempo de Inactividad</h2>
+              <p class="text-sm text-gray-500 mt-1">Configura el tiempo de inactividad antes de cerrar la sesión automáticamente.</p>
+            </div>
+            
+            <div class="p-6">
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    Tiempo de inactividad (minutos)
+                  </label>
+                  <select 
+                    name="session_timeout_minutes" 
+                    class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {SESSION_TIMEOUT_OPTIONS.map((opt) => (
+                      <option 
+                        key={opt.value} 
+                        value={opt.value} 
+                        selected={sessionTimeoutMinutes === opt.value}
+                      >
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                  <p class="text-sm text-amber-800">
+                    <strong>⚠️ Nota:</strong> Cuando queden 30 segundos para cerrar la sesión, 
+                    el usuario verá una advertencia con opción de mantener la sesión activa.
+                  </p>
+                </div>
               </div>
-              
-              <div class="bg-gray-50 rounded-lg p-4">
-                <p class="text-sm text-gray-600">
-                  <strong>Hora actual en {currentTimezone}:</strong>
-                </p>
-                <p class="text-lg font-medium text-gray-900 mt-1">{currentTimeInTz}</p>
-              </div>
-              
-              <button 
-                type="submit"
-                class="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
-              >
-                Guardar Zona Horaria
-              </button>
-            </form>
-          </div>
-        </div>
-        
-        {/* Timeout de Sesión */}
-        <div class="bg-white rounded-lg shadow">
-          <div class="px-6 py-4 border-b border-gray-200">
-            <h2 class="text-lg font-semibold text-gray-900">⏱️ Tiempo de Inactividad</h2>
-            <p class="text-sm text-gray-500 mt-1">Configura el tiempo de inactividad antes de cerrar la sesión automáticamente.</p>
+            </div>
           </div>
           
-          <div class="p-6">
-            <form method="post" action="/admin/settings/session-timeout" class="space-y-4">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-2">
-                  Tiempo de inactividad (minutos)
-                </label>
-                <select 
-                  name="session_timeout_minutes" 
-                  class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                >
-                  {SESSION_TIMEOUT_OPTIONS.map((opt) => (
-                    <option 
-                      key={opt.value} 
-                      value={opt.value} 
-                      selected={sessionTimeoutMinutes === opt.value}
-                    >
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
+          {/* Auto-asignación de tickets */}
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+              <h2 class="text-lg font-semibold text-gray-900">🤖 Auto-asignación de Tickets</h2>
+              <p class="text-sm text-gray-500 mt-1">
+                Asigna automáticamente los tickets nuevos al agente con menos carga de trabajo.
+              </p>
+            </div>
+            
+            <div class="p-6">
+              <div class="space-y-4">
+                <div class="flex items-center gap-4">
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      name="auto_assign_enabled" 
+                      value="true"
+                      checked={autoAssignEnabled}
+                      class="sr-only peer"
+                    />
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    <span class="ms-3 text-sm font-medium text-gray-700">
+                      {autoAssignEnabled ? 'Activado' : 'Desactivado'}
+                    </span>
+                  </label>
+                </div>
+                
+                <div class={`border rounded-lg p-4 ${autoAssignEnabled ? 'bg-green-50 border-green-200' : 'bg-gray-50 border-gray-200'}`}>
+                  <p class={`text-sm ${autoAssignEnabled ? 'text-green-800' : 'text-gray-600'}`}>
+                    <strong>ℹ️ Funcionamiento:</strong> Cuando se crea un nuevo ticket, se asignará 
+                    automáticamente al agente activo con menos tickets pendientes.
+                  </p>
+                </div>
               </div>
-              
-              <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
-                <p class="text-sm text-amber-800">
-                  <strong>⚠️ Nota:</strong> Cuando queden 30 segundos para cerrar la sesión, 
-                  el usuario verá una advertencia con opción de mantener la sesión activa.
-                </p>
-              </div>
-              
-              <button 
-                type="submit"
-                class="px-4 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700"
-              >
-                Guardar Tiempo de Inactividad
-              </button>
-            </form>
+            </div>
           </div>
-        </div>
+          
+          {/* Auto-cierre de tickets en "Esperando respuesta" */}
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+              <h2 class="text-lg font-semibold text-gray-900">🔄 Auto-cierre de Tickets</h2>
+              <p class="text-sm text-gray-500 mt-1">
+                Cierra automáticamente los tickets en estado "Esperando respuesta" después de un período de inactividad.
+              </p>
+            </div>
+            
+            <div class="p-6">
+              <div class="space-y-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    Días sin respuesta del usuario
+                  </label>
+                  <select 
+                    name="pending_auto_resolve_days" 
+                    class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  >
+                    {[1, 2, 3, 5, 7, 10, 14, 21, 30].map((days) => (
+                      <option 
+                        key={days} 
+                        value={days} 
+                        selected={pendingAutoResolveDays === days}
+                      >
+                        {days} {days === 1 ? 'día' : 'días'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                
+                <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  <p class="text-sm text-blue-800">
+                    <strong>ℹ️ Funcionamiento:</strong> Cuando un ticket está en "Esperando respuesta" 
+                    y el usuario no responde en el tiempo configurado, el ticket se cerrará automáticamente 
+                    con una nota indicando el motivo.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          {/* Botón de Guardado General */}
+          <div class="sticky bottom-0 bg-white border-t border-gray-200 p-6 rounded-lg shadow-lg flex gap-3 justify-end">
+            <a 
+              href="/admin"
+              class="px-6 py-2 text-gray-700 font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
+            >
+              Cancelar
+            </a>
+            <button 
+              type="submit"
+              class="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors"
+            >
+              💾 Guardar Todos los Cambios
+            </button>
+          </div>
+        </form>
         
         {/* Información del Sistema */}
         <div class="bg-white rounded-lg shadow">
@@ -1845,9 +2058,9 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
 });
 
 /**
- * POST /admin/settings/timezone - Guardar zona horaria
+ * POST /admin/settings/save - Guardar toda la configuración del sistema
  */
-adminRoutes.post('/admin/settings/timezone', requireAdmin, async (c) => {
+adminRoutes.post('/admin/settings/save', requireAdmin, async (c) => {
   const user = c.get('user')!;
   
   // Solo super_admin puede modificar
@@ -1857,48 +2070,46 @@ adminRoutes.post('/admin/settings/timezone', requireAdmin, async (c) => {
   
   try {
     const formData = await c.req.formData();
+    
+    // Guardar timezone
     const timezone = formData.get('timezone') as string;
+    if (timezone) {
+      const tzResult = await setTimezone(c.env.DB, timezone);
+      if (!tzResult.success) {
+        return c.text(tzResult.error || 'Error al guardar zona horaria', 400);
+      }
+    }
     
-    const result = await setTimezone(c.env.DB, timezone);
+    // Guardar session timeout
+    const sessionTimeoutMinutes = parseInt(formData.get('session_timeout_minutes') as string, 10);
+    if (!isNaN(sessionTimeoutMinutes)) {
+      const stResult = await setSessionTimeout(c.env.DB, sessionTimeoutMinutes);
+      if (!stResult.success) {
+        return c.text(stResult.error || 'Error al guardar tiempo de inactividad', 400);
+      }
+    }
     
-    if (!result.success) {
-      return c.text(result.error || 'Error al guardar', 400);
+    // Guardar auto-assign enabled
+    const autoAssignEnabled = formData.get('auto_assign_enabled') === 'true';
+    const aaResult = await setAutoAssignEnabled(c.env.DB, autoAssignEnabled);
+    if (!aaResult.success) {
+      return c.text(aaResult.error || 'Error al guardar configuración de auto-asignación', 400);
+    }
+    
+    // Guardar pending auto-resolve days
+    const pendingAutoResolveDays = parseInt(formData.get('pending_auto_resolve_days') as string, 10);
+    if (!isNaN(pendingAutoResolveDays)) {
+      const parResult = await setPendingAutoResolveDays(c.env.DB, pendingAutoResolveDays);
+      if (!parResult.success) {
+        return c.text(parResult.error || 'Error al guardar días de auto-cierre', 400);
+      }
     }
     
     return c.redirect('/admin/settings');
     
   } catch (error) {
-    console.error('Save timezone error:', error);
-    return c.text('Error al guardar zona horaria', 500);
-  }
-});
-
-/**
- * POST /admin/settings/session-timeout - Guardar tiempo de inactividad
- */
-adminRoutes.post('/admin/settings/session-timeout', requireAdmin, async (c) => {
-  const user = c.get('user')!;
-  
-  // Solo super_admin puede modificar
-  if (user.role !== 'super_admin') {
-    return c.text('No autorizado', 403);
-  }
-  
-  try {
-    const formData = await c.req.formData();
-    const minutes = parseInt(formData.get('session_timeout_minutes') as string, 10);
-    
-    const result = await setSessionTimeout(c.env.DB, minutes);
-    
-    if (!result.success) {
-      return c.text(result.error || 'Error al guardar', 400);
-    }
-    
-    return c.redirect('/admin/settings');
-    
-  } catch (error) {
-    console.error('Save session timeout error:', error);
-    return c.text('Error al guardar tiempo de inactividad', 500);
+    console.error('Save settings error:', error);
+    return c.text('Error al guardar configuración del sistema', 500);
   }
 });
 

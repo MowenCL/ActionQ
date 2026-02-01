@@ -90,7 +90,7 @@ export type UserRole = 'super_admin' | 'agent_admin' | 'agent' | 'org_admin' | '
 /**
  * Estados posibles de un ticket.
  */
-export type TicketStatus = 'open' | 'in_progress' | 'pending' | 'resolved' | 'closed';
+export type TicketStatus = 'open' | 'in_progress' | 'pending' | 'closed';
 
 /**
  * Prioridades de ticket.

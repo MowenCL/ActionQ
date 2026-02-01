@@ -27,6 +27,7 @@ import {
   logSecureKeyDeletion,
   logSecureKeyCreation
 } from '../services/secureKey.service';
+import { getSystemConfig, getAvailableAgent } from '../services/config.service';
 
 const ticketRoutes = new Hono<AppEnv>();
 
@@ -58,7 +59,7 @@ ticketRoutes.get('/tickets', requireAuth, async (c) => {
       LEFT JOIN users u ON t.created_by = u.id 
       LEFT JOIN tenants ten ON t.tenant_id = ten.id 
       LEFT JOIN users agent ON t.assigned_to = agent.id 
-      WHERE t.status NOT IN ('closed', 'resolved')
+      WHERE t.status NOT IN ('closed')
       ORDER BY ${PRIORITY_ORDER_SQL}, t.created_at DESC
     `;
     result = await db.prepare(query).all<Ticket & { user_name: string; tenant_name: string; agent_name: string | null }>();
@@ -70,7 +71,7 @@ ticketRoutes.get('/tickets', requireAuth, async (c) => {
       LEFT JOIN users u ON t.created_by = u.id 
       LEFT JOIN tenants ten ON t.tenant_id = ten.id 
       LEFT JOIN users agent ON t.assigned_to = agent.id 
-      WHERE t.tenant_id = ? AND t.status NOT IN ('closed', 'resolved')
+      WHERE t.tenant_id = ? AND t.status NOT IN ('closed')
       ORDER BY ${PRIORITY_ORDER_SQL}, t.created_at DESC
     `;
     result = await db.prepare(query).bind(user.tenant_id).all<Ticket & { user_name: string; tenant_name: string; agent_name: string | null }>();
@@ -82,7 +83,7 @@ ticketRoutes.get('/tickets', requireAuth, async (c) => {
       LEFT JOIN tenants ten ON t.tenant_id = ten.id 
       LEFT JOIN users agent ON t.assigned_to = agent.id 
       LEFT JOIN ticket_participants tp ON t.id = tp.ticket_id
-      WHERE (t.created_by = ? OR tp.user_id = ?) AND t.status NOT IN ('closed', 'resolved')
+      WHERE (t.created_by = ? OR tp.user_id = ?) AND t.status NOT IN ('closed')
       ORDER BY ${PRIORITY_ORDER_SQL}, t.created_at DESC
     `;
     result = await db.prepare(query).bind(user.id, user.id).all<Ticket & { tenant_name: string; agent_name: string | null }>();
@@ -160,14 +161,12 @@ ticketRoutes.get('/tickets', requireAuth, async (c) => {
                           ticket.status === 'open' ? 'bg-blue-100 text-blue-800' :
                           ticket.status === 'in_progress' ? 'bg-yellow-100 text-yellow-800' :
                           ticket.status === 'pending' ? 'bg-purple-100 text-purple-800' :
-                          ticket.status === 'resolved' ? 'bg-green-100 text-green-800' :
                           ticket.status === 'closed' ? 'bg-gray-100 text-gray-800' :
                           'bg-gray-100 text-gray-800'
                         }`}>
                           {ticket.status === 'open' ? 'Abierto' :
                            ticket.status === 'in_progress' ? 'En Progreso' :
-                           ticket.status === 'pending' ? 'Validando' :
-                           ticket.status === 'resolved' ? 'Resuelto' :
+                           ticket.status === 'pending' ? 'Esperando' :
                            ticket.status === 'closed' ? 'Cerrado' :
                            ticket.status}
                         </span>
@@ -209,13 +208,13 @@ ticketRoutes.get('/tickets', requireAuth, async (c) => {
 });
 
 /**
- * GET /tickets/history - Historial de tickets cerrados y resueltos
+ * GET /tickets/history - Historial de tickets cerrados
  */
 ticketRoutes.get('/tickets/history', requireAuth, async (c) => {
   const user = c.get('user')!;
   const db = c.env.DB;
   
-  // Filtro según rol - solo tickets cerrados o resueltos
+  // Filtro según rol - solo tickets cerrados
   let query: string;
   let result;
   
@@ -224,14 +223,14 @@ ticketRoutes.get('/tickets/history', requireAuth, async (c) => {
   const isInternalTeam = user.role === 'super_admin' || user.role === 'agent_admin' || user.role === 'agent';
   
   if (isInternalTeam) {
-    // Equipo interno ve todos los tickets cerrados/resueltos
+    // Equipo interno ve todos los tickets cerrados
     query = `
       SELECT t.*, u.name as user_name, ten.name as tenant_name, agent.name as agent_name 
       FROM tickets t 
       LEFT JOIN users u ON t.created_by = u.id 
       LEFT JOIN tenants ten ON t.tenant_id = ten.id 
       LEFT JOIN users agent ON t.assigned_to = agent.id 
-      WHERE t.status IN ('closed', 'resolved')
+      WHERE t.status = 'closed'
       ORDER BY t.updated_at DESC
     `;
     result = await db.prepare(query).all<Ticket & { user_name: string; tenant_name: string; agent_name: string | null }>();
@@ -243,7 +242,7 @@ ticketRoutes.get('/tickets/history', requireAuth, async (c) => {
       LEFT JOIN users u ON t.created_by = u.id 
       LEFT JOIN tenants ten ON t.tenant_id = ten.id 
       LEFT JOIN users agent ON t.assigned_to = agent.id 
-      WHERE t.tenant_id = ? AND t.status IN ('closed', 'resolved')
+      WHERE t.tenant_id = ? AND t.status = 'closed'
       ORDER BY t.updated_at DESC
     `;
     result = await db.prepare(query).bind(user.tenant_id).all<Ticket & { user_name: string; tenant_name: string; agent_name: string | null }>();
@@ -255,7 +254,7 @@ ticketRoutes.get('/tickets/history', requireAuth, async (c) => {
       LEFT JOIN tenants ten ON t.tenant_id = ten.id 
       LEFT JOIN users agent ON t.assigned_to = agent.id 
       LEFT JOIN ticket_participants tp ON t.id = tp.ticket_id
-      WHERE (t.created_by = ? OR tp.user_id = ?) AND t.status IN ('closed', 'resolved')
+      WHERE (t.created_by = ? OR tp.user_id = ?) AND t.status = 'closed'
       ORDER BY t.updated_at DESC
     `;
     result = await db.prepare(query).bind(user.id, user.id).all<Ticket & { tenant_name: string; agent_name: string | null }>();
@@ -322,11 +321,8 @@ ticketRoutes.get('/tickets/history', requireAuth, async (c) => {
                         )}
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap">
-                        <span class={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                          ticket.status === 'resolved' ? 'bg-green-100 text-green-800' :
-                          'bg-gray-100 text-gray-800'
-                        }`}>
-                          {ticket.status === 'resolved' ? 'Resuelto' : 'Cerrado'}
+                        <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                          Cerrado
                         </span>
                       </td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -695,13 +691,24 @@ ticketRoutes.post('/tickets', requireAuth, async (c) => {
       ticketCreatedByAgent = user.id; // Guardar quién realmente creó el ticket
     }
     
+    // Verificar si la auto-asignación está habilitada
+    const config = await getSystemConfig(c.env.DB);
+    let assignedAgentId: number | null = null;
+    
+    if (config.autoAssignEnabled) {
+      const availableAgent = await getAvailableAgent(c.env.DB);
+      if (availableAgent) {
+        assignedAgentId = availableAgent.id;
+      }
+    }
+    
     const result = await c.env.DB
       .prepare(`
-        INSERT INTO tickets (tenant_id, title, description, priority, created_by, created_by_agent) 
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO tickets (tenant_id, title, description, priority, created_by, created_by_agent, assigned_to) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         RETURNING id
       `)
-      .bind(ticketTenantId, title, description, priority, ticketCreatedBy, ticketCreatedByAgent)
+      .bind(ticketTenantId, title, description, priority, ticketCreatedBy, ticketCreatedByAgent, assignedAgentId)
       .first<{ id: number }>();
     
     return c.redirect(`/tickets/${result?.id}`);
@@ -1439,17 +1446,11 @@ ticketRoutes.get('/tickets/:id', requireAuth, async (c) => {
                             }
                           `}
                         >
-                          <option value="open" selected={ticket.status === 'open'}>
-                            📬 Abierto {ticket.status === 'open' ? '(Actual)' : ''}
-                          </option>
-                          <option value="in_progress" selected={ticket.status === 'in_progress'}>
-                            ⏳ En Progreso {ticket.status === 'in_progress' ? '(Actual)' : ''}
+                          <option value="in_progress" selected={ticket.status === 'in_progress' || ticket.status === 'open'}>
+                            ⏳ En Progreso {ticket.status === 'in_progress' || ticket.status === 'open' ? '(Actual)' : ''}
                           </option>
                           <option value="pending" selected={ticket.status === 'pending'}>
-                            ⏸️ Validando {ticket.status === 'pending' ? '(Actual)' : ''}
-                          </option>
-                          <option value="resolved" selected={ticket.status === 'resolved'}>
-                            ✅ Resuelto {ticket.status === 'resolved' ? '(Actual)' : ''}
+                            ⏸️ Esperando respuesta {ticket.status === 'pending' ? '(Actual)' : ''}
                           </option>
                           <option value="closed" selected={ticket.status === 'closed'}>
                             🔒 Cerrado {ticket.status === 'closed' ? '(Actual)' : ''}
@@ -1647,7 +1648,7 @@ ticketRoutes.post('/tickets/:id/status', requireAuth, async (c) => {
       return c.text('Debes incluir un mensaje al cambiar el estado', 400);
     }
     
-    const validStatuses = ['open', 'in_progress', 'pending', 'resolved', 'closed'];
+    const validStatuses = ['open', 'in_progress', 'pending', 'closed'];
     if (!validStatuses.includes(newStatus)) {
       return c.text('Estado inválido', 400);
     }
@@ -2133,8 +2134,8 @@ ticketRoutes.post('/tickets/:id/messages', requireAuth, async (c) => {
       .bind(ticketId)
       .run();
     
-    // Si el ticket estaba en "Resuelto" y se añade un mensaje público, volver a "En Progreso"
-    if (ticket.status === 'resolved' && isInternal === 0) {
+    // Si el ticket estaba en "Esperando respuesta" y se añade un mensaje público del usuario, volver a "En Progreso"
+    if (ticket.status === 'pending' && isInternal === 0 && !isInternalTeam) {
       await c.env.DB
         .prepare("UPDATE tickets SET status = 'in_progress' WHERE id = ?")
         .bind(ticketId)
@@ -2143,13 +2144,13 @@ ticketRoutes.post('/tickets/:id/messages', requireAuth, async (c) => {
       // Añadir nota automática
       await c.env.DB
         .prepare('INSERT INTO messages (ticket_id, user_id, content, is_internal) VALUES (?, ?, ?, 1)')
-        .bind(ticketId, user.id, '🔄 El ticket ha vuelto a "En Progreso" debido a un nuevo mensaje.')
+        .bind(ticketId, user.id, '🔄 El ticket ha vuelto a "En Progreso" debido a un nuevo mensaje del usuario.')
         .run();
     }
     
     // Procesar cambio de estado si se seleccionó uno nuevo
     const newStatus = formData.get('new_status') as string;
-    const validStatuses = ['open', 'in_progress', 'pending', 'resolved', 'closed'];
+    const validStatuses = ['open', 'in_progress', 'pending', 'closed'];
     
     if (newStatus && validStatuses.includes(newStatus) && newStatus !== ticket.status) {
       // Solo equipo interno puede cambiar estado
@@ -2169,8 +2170,7 @@ ticketRoutes.post('/tickets/:id/messages', requireAuth, async (c) => {
         const statusLabels: Record<string, string> = {
           'open': 'Abierto',
           'in_progress': 'En Progreso',
-          'pending': 'Validando',
-          'resolved': 'Resuelto',
+          'pending': 'Esperando respuesta',
           'closed': 'Cerrado'
         };
         

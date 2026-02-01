@@ -21,7 +21,6 @@ ActionQ es una **plantilla reutilizable (boilerplate)** para crear sistemas de g
 - 💾 **Base de datos**: Cloudflare D1 (SQLite distribuido)
 - 📦 **Zero Config**: Solo configura variables y despliega
 - 🔧 **First-Run Setup**: Wizard de configuración inicial automático
-- ⏱️ **Tiempo de Inactividad**: Desactivación automática de sesiones inactivas
 - 🤖 **Auto-asignación de Tickets**: Asignación automática a agentes con menor carga
 - 🔄 **Auto-cierre de Tickets**: Cierre automático de tickets pendientes después de X días
 
@@ -287,15 +286,6 @@ Cuando accedas por primera vez a la aplicación:
 ---
 
 ## 🤖 Características Avanzadas
-
-### ⏱️ Tiempo de Inactividad
-
-El sistema monitorea la inactividad de las sesiones de usuario. Las sesiones inactivas se desactivan automáticamente después de un período configurable, mejorando la seguridad:
-
-- **Detección automática**: Se registra la última actividad del usuario
-- **Configuración flexible**: El `super_admin` puede establecer el tiempo de inactividad máximo
-- **Cierre seguro**: Requiere re-autenticación después del timeout
-- **Panel de control**: Accesible desde `/admin/settings`
 
 ### 🤖 Auto-asignación de Tickets
 

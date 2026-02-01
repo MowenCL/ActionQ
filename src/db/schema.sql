@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS tickets (
     tenant_id INTEGER NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     description TEXT,
-    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'in_progress', 'pending', 'resolved', 'closed')),
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'in_progress', 'pending', 'closed')),
     priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low', 'medium', 'high', 'urgent')),
     created_by INTEGER NOT NULL REFERENCES users(id),
     created_by_agent INTEGER REFERENCES users(id),
