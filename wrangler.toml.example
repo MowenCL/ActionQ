@@ -18,7 +18,7 @@ main = "src/index.tsx"
 
 # Fecha de compatibilidad - determina qué APIs están disponibles
 # Más info: https://developers.cloudflare.com/workers/configuration/compatibility-dates/
-compatibility_date = "2024-12-01"
+compatibility_date = "2026-01-20"
 
 # ================================================
 # BASE DE DATOS D1
