@@ -126,14 +126,53 @@ npx wrangler secret put ZEPTOMAIL_FROM_NAME
 
 Si despliega desde GitHub Actions (Cloudflare Pages):
 
-1. **Agregar secretos en GitHub** (Settings → Secrets and variables → Actions):
-   - `CLOUDFLARE_API_TOKEN`: Tu token de API de Cloudflare
-   - `CLOUDFLARE_ACCOUNT_ID`: Tu account ID
-   - `WRANGLER_TOML_CONTENT`: Contenido codificado de tu `wrangler.toml`
+### Opción A: Usar Cloudflare Pages (Recomendado)
 
-2. **El workflow generará `wrangler.toml`** antes de desplegar
+**Paso 1**: En GitHub, ve a **Settings** → **Secrets and variables** → **Actions**
 
-3. **Secretos de Wrangler** deben configurarse manualmente en Cloudflare Dashboard → Worker
+**Paso 2**: Agrega estos secretos:
+
+```
+CLOUDFLARE_API_TOKEN        # Tu API token de Cloudflare
+CLOUDFLARE_ACCOUNT_ID       # Tu Account ID
+CLOUDFLARE_DATABASE_ID      # ID de tu base de datos D1
+CLOUDFLARE_KV_NAMESPACE_ID  # ID de tu namespace KV para OTP
+ZEPTOMAIL_TOKEN             # (Opcional) Token de ZeptoMail
+ZEPTOMAIL_FROM_EMAIL        # (Opcional) Email remitente
+ZEPTOMAIL_FROM_NAME         # (Opcional) Nombre del remitente
+APP_SECRET                  # Secreto para firmar cookies (32+ caracteres)
+ADMIN_INIT_EMAIL            # Email del primer admin
+ADMIN_INIT_PASSWORD         # Contraseña temporal del admin
+```
+
+**Paso 3**: El workflow `.github/workflows/deploy.yml` generará automáticamente `wrangler.toml` desde estos secretos y desplegará.
+
+### Opción B: Cloudflare Pages Dashboard
+
+1. Ve a **Cloudflare Dashboard** → **Pages** → Tu proyecto
+2. **Settings** → **Environment variables**
+3. Agrega las variables (excepto `CLOUDFLARE_API_TOKEN` que debe ir en GitHub Secrets)
+4. En el **Build settings**, asegúrate que el comando sea:
+   ```
+   npm install && npm run setup-wrangler && npm run deploy
+   ```
+
+### Obtener tus IDs de Cloudflare
+
+```bash
+# Database ID
+npx wrangler d1 list
+
+# KV Namespace ID
+npx wrangler kv:namespace list
+
+# API Token
+# Ve a: https://dash.cloudflare.com/profile/api-tokens
+# Crea un token con permisos: Worker Subdomain Edit, Cloudflare Workers Deploy
+
+# Account ID
+# Ve a: https://dash.cloudflare.com/cxxxxxxx (el xxxxx es tu Account ID)
+```
 
 ## 🆘 Troubleshooting
 

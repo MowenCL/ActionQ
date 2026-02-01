@@ -1,0 +1,49 @@
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: 📦 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      
+      - name: 📚 Install dependencies
+        run: npm ci
+      
+      - name: ⚙️ Setup wrangler.toml from environment variables
+        run: npm run setup-wrangler
+        env:
+          CLOUDFLARE_DATABASE_ID: ${{ secrets.CLOUDFLARE_DATABASE_ID }}
+          CLOUDFLARE_KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_KV_NAMESPACE_ID }}
+          CLOUDFLARE_PREVIEW_KV_NAMESPACE_ID: ${{ secrets.CLOUDFLARE_PREVIEW_KV_NAMESPACE_ID }}
+          ZEPTOMAIL_FROM_EMAIL: ${{ secrets.ZEPTOMAIL_FROM_EMAIL }}
+          ZEPTOMAIL_FROM_NAME: ${{ secrets.ZEPTOMAIL_FROM_NAME }}
+      
+      - name: 🚀 Deploy to Cloudflare Workers
+        run: npm run deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      
+      - name: 🔑 Setup Wrangler secrets
+        run: |
+          npx wrangler secret put APP_SECRET --text "${{ secrets.APP_SECRET }}"
+          npx wrangler secret put ADMIN_INIT_EMAIL --text "${{ secrets.ADMIN_INIT_EMAIL }}"
+          npx wrangler secret put ADMIN_INIT_PASSWORD --text "${{ secrets.ADMIN_INIT_PASSWORD }}"
+          if [ ! -z "${{ secrets.ZEPTOMAIL_TOKEN }}" ]; then
+            npx wrangler secret put ZEPTOMAIL_TOKEN --text "${{ secrets.ZEPTOMAIL_TOKEN }}"
+          fi
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -4,6 +4,7 @@
   "description": "🎫 Sistema de Tickets Multi-tenant con Cloudflare Workers, Hono y D1",
   "type": "module",
   "scripts": {
+    "setup-wrangler": "node scripts/setup-wrangler.js",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "types": "wrangler types",
