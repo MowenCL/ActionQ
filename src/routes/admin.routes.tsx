@@ -25,8 +25,19 @@ import {
   setTimezone, 
   setSessionTimeout,
   setPendingAutoResolveDays,
-  setAutoAssignEnabled
+  setAutoAssignEnabled,
+  setEmailEnabled,
+  setEmailProvider,
+  setOtpEnabled,
+  getZeptoMailTemplates,
+  setZeptoMailTemplates
 } from '../services/config.service';
+import {
+  sendEmail,
+  sendEmailWithTemplate,
+  getEmailConfig,
+  testEmailTemplate
+} from '../services/email.service';
 
 const adminRoutes = new Hono<AppEnv>();
 
@@ -1835,6 +1846,16 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
   const sessionTimeoutMinutes = config.sessionTimeoutMinutes;
   const pendingAutoResolveDays = config.pendingAutoResolveDays;
   const autoAssignEnabled = config.autoAssignEnabled;
+  const emailEnabled = config.emailEnabled;
+  const otpEnabled = config.otpEnabled;
+  const emailTestTemplateKey = config.emailTestTemplateKey;
+  
+  // Verificar si ZeptoMail está configurado (solo requiere token y from email)
+  const emailConfig = getEmailConfig(c.env);
+  const isEmailConfigured = emailConfig.apiToken !== 'not-configured' && emailConfig.fromEmail !== 'noreply@example.com';
+  
+  // Verificar si se envió un correo de prueba exitosamente
+  const testEmailSent = c.req.query('test_email_sent') === 'true';
   
   // Obtener hora actual en la zona horaria configurada
   const now = new Date();
@@ -1858,7 +1879,7 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
         </div>
         
         {/* Formulario General de Configuración */}
-        <form method="post" action="/admin/settings/save" class="space-y-6">
+        <form method="post" action="/admin/settings/save" class="space-y-6" id="settings-form">
           {/* Zona Horaria */}
           <div class="bg-white rounded-lg shadow">
             <div class="px-6 py-4 border-b border-gray-200">
@@ -2016,22 +2037,207 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
             </div>
           </div>
           
-          {/* Botón de Guardado General */}
-          <div class="sticky bottom-0 bg-white border-t border-gray-200 p-6 rounded-lg shadow-lg flex gap-3 justify-end">
-            <a 
-              href="/admin"
-              class="px-6 py-2 text-gray-700 font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
-            >
-              Cancelar
-            </a>
-            <button 
-              type="submit"
-              class="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors"
-            >
-              💾 Guardar Todos los Cambios
-            </button>
+          {/* Configuración de Correos Electrónicos */}
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+              <h2 class="text-lg font-semibold text-gray-900">📧 Correos Electrónicos</h2>
+              <p class="text-sm text-gray-500 mt-1">
+                Configura el envío de notificaciones por correo electrónico.
+              </p>
+            </div>
+            
+            <div class="p-6">
+              <div class="space-y-6">
+                {/* Estado de configuración ZeptoMail */}
+                <div class={`p-4 rounded-lg border ${isEmailConfigured ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
+                  {isEmailConfigured ? (
+                    <p class="text-sm text-green-800">
+                      <strong>✅ ZeptoMail configurado:</strong> Las credenciales de ZeptoMail están configuradas correctamente.
+                    </p>
+                  ) : (
+                    <p class="text-sm text-yellow-800">
+                      <strong>⚠️ ZeptoMail no configurado:</strong> Debes configurar las variables de entorno 
+                      <code class="mx-1 px-1 bg-yellow-100 rounded">ZEPTOMAIL_TOKEN</code>,
+                      <code class="mx-1 px-1 bg-yellow-100 rounded">ZEPTOMAIL_FROM_EMAIL</code> y
+                      <code class="mx-1 px-1 bg-yellow-100 rounded">ZEPTOMAIL_FROM_NAME</code> en tu wrangler.toml
+                    </p>
+                  )}
+                </div>
+                
+                {/* Toggle para habilitar/deshabilitar correos */}
+                <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                  <div>
+                    <label class="text-sm font-medium text-gray-900">Habilitar envío de correos</label>
+                    <p class="text-xs text-gray-500 mt-1">
+                      Activa o desactiva todas las notificaciones por correo electrónico del sistema.
+                    </p>
+                  </div>
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input 
+                      type="checkbox" 
+                      name="email_enabled"
+                      value="true"
+                      class="sr-only peer"
+                      checked={emailEnabled}
+                      disabled={!isEmailConfigured}
+                    />
+                    <div class={`w-11 h-6 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all ${isEmailConfigured ? 'bg-gray-200 peer-checked:bg-blue-600' : 'bg-gray-300 cursor-not-allowed'}`}></div>
+                  </label>
+                </div>
+                
+                {!isEmailConfigured && (
+                  <p class="text-xs text-gray-500 italic">
+                    * Debes configurar ZeptoMail antes de poder habilitar el envío de correos.
+                  </p>
+                )}
+                
+                {/* Selector de Proveedor de Correo */}
+                {emailEnabled && isEmailConfigured && (
+                  <div class="space-y-4">
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700 mb-2">
+                        📨 Proveedor de Correo
+                      </label>
+                      <select 
+                        name="email_provider"
+                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                      >
+                        <option value="">Seleccionar proveedor...</option>
+                        <option value="zeptomail" selected={config.emailProvider === 'zeptomail'}>ZeptoMail</option>
+                        <option value="smtp" disabled>SMTP (Próximamente)</option>
+                      </select>
+                      <p class="text-xs text-gray-500 mt-1">
+                        Selecciona el servicio de correo que deseas utilizar.
+                      </p>
+                    </div>
+                    
+                    {/* Botón de configuración del proveedor */}
+                    {config.emailProvider === 'zeptomail' && (
+                      <div class="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <div class="flex-1">
+                          <p class="text-sm font-medium text-blue-900">Configurar templates de ZeptoMail</p>
+                          <p class="text-xs text-blue-600 mt-1">
+                            Configura las plantillas para correos de prueba, restablecimiento de contraseña y notificaciones de tickets.
+                          </p>
+                        </div>
+                        <a 
+                          href="/admin/settings/email-provider"
+                          class="px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
+                        >
+                          ⚙️ Configurar
+                        </a>
+                      </div>
+                    )}
+                    
+                    {config.emailProvider === 'smtp' && (
+                      <div class="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                        <p class="text-sm text-gray-600">
+                          <span class="inline-block px-2 py-1 bg-gray-200 text-gray-700 text-xs font-semibold rounded mr-2">Próximamente</span>
+                          La configuración de SMTP estará disponible en una próxima actualización.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
         </form>
+        
+        {/* Espacio para la barra fija */}
+        <div class="h-24"></div>
+        
+        {/* Prueba de Correo Electrónico */}
+        {isEmailConfigured && (
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+              <h2 class="text-lg font-semibold text-gray-900">🧪 Prueba de Correo</h2>
+              <p class="text-sm text-gray-500 mt-1">
+                Envía un correo de prueba para verificar que la configuración de ZeptoMail funciona correctamente.
+              </p>
+            </div>
+            
+            <div class="p-6">
+              {testEmailSent && (
+                <div class="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <p class="text-sm text-green-800">
+                    <strong>✅ Correo enviado:</strong> El correo de prueba se envió exitosamente. Revisa tu bandeja de entrada.
+                  </p>
+                </div>
+              )}
+              
+              <form method="post" action="/admin/settings/test-email" class="flex flex-col sm:flex-row gap-3">
+                <div class="flex-1">
+                  <input 
+                    type="email" 
+                    name="test_email" 
+                    placeholder="correo@ejemplo.com"
+                    required
+                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+                <button 
+                  type="submit"
+                  class={`px-6 py-2 font-medium rounded-lg transition-colors ${emailEnabled ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-300 text-gray-500 cursor-not-allowed'}`}
+                  disabled={!emailEnabled}
+                >
+                  📤 Enviar Prueba
+                </button>
+              </form>
+              
+              {!emailEnabled && (
+                <p class="mt-3 text-sm text-amber-600">
+                  ⚠️ Debes habilitar el envío de correos y guardar los cambios antes de poder enviar una prueba.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {/* Configuración de OTP */}
+        <div class="bg-white rounded-lg shadow">
+          <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-lg font-semibold text-gray-900">🔐 Verificación por OTP</h2>
+            <p class="text-sm text-gray-500 mt-1">
+              Gestiona la autenticación de dos factores con códigos de un solo uso.
+            </p>
+          </div>
+          
+          <div class="p-6 space-y-4">
+            {/* Toggle para habilitar/deshabilitar OTP */}
+            <div class="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+              <div>
+                <label class="text-sm font-medium text-gray-900">Habilitar verificación por OTP</label>
+                <p class="text-xs text-gray-500 mt-1">
+                  Requiere código OTP en registro de usuarios y restablecimiento de contraseña.
+                </p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  name="otp_enabled"
+                  value="true"
+                  class="sr-only peer"
+                  checked={otpEnabled}
+                />
+                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+              </label>
+            </div>
+            
+            {otpEnabled && (
+              <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <p class="text-sm text-blue-900">
+                  <strong>✅ OTP Habilitado:</strong> Los usuarios deberán verificar su correo con un código de 6 dígitos.
+                </p>
+                <ul class="text-xs text-blue-800 mt-2 list-disc list-inside space-y-1">
+                  <li>Requiere correos habilitados y configurados</li>
+                  <li>Código válido por 15 minutos</li>
+                  <li>Máximo 3 intentos fallidos por OTP</li>
+                </ul>
+              </div>
+            )}
+          </div>
+        </div>
         
         {/* Información del Sistema */}
         <div class="bg-white rounded-lg shadow">
@@ -2051,6 +2257,25 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
               </div>
             </dl>
           </div>
+        </div>
+      </div>
+      
+      {/* Barra de guardar fija al final */}
+      <div class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-6 shadow-lg">
+        <div class="max-w-7xl mx-auto flex gap-3 justify-end">
+          <a 
+            href="/admin"
+            class="px-6 py-2 text-gray-700 font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
+          >
+            Cancelar
+          </a>
+          <button 
+            type="submit"
+            form="settings-form"
+            class="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors"
+          >
+            💾 Guardar Todos los Cambios
+          </button>
         </div>
       </div>
     </Layout>
@@ -2105,6 +2330,29 @@ adminRoutes.post('/admin/settings/save', requireAdmin, async (c) => {
       }
     }
     
+    // Guardar email enabled
+    const emailEnabled = formData.get('email_enabled') === 'true';
+    const emailResult = await setEmailEnabled(c.env.DB, emailEnabled);
+    if (!emailResult.success) {
+      return c.text(emailResult.error || 'Error al guardar configuración de correos', 400);
+    }
+    
+    // Guardar email provider
+    const emailProvider = (formData.get('email_provider') as string || '').trim() as 'smtp' | 'zeptomail' | '';
+    if (emailProvider) {
+      const providerResult = await setEmailProvider(c.env.DB, emailProvider);
+      if (!providerResult.success) {
+        return c.text(providerResult.error || 'Error al guardar proveedor de correos', 400);
+      }
+    }
+    
+    // Guardar OTP enabled
+    const otpEnabled = formData.get('otp_enabled') === 'true';
+    const otpResult = await setOtpEnabled(c.env.DB, otpEnabled);
+    if (!otpResult.success) {
+      return c.text(otpResult.error || 'Error al guardar configuración de OTP', 400);
+    }
+    
     return c.redirect('/admin/settings');
     
   } catch (error) {
@@ -2113,4 +2361,504 @@ adminRoutes.post('/admin/settings/save', requireAdmin, async (c) => {
   }
 });
 
+/**
+ * POST /admin/settings/test-email - Enviar correo de prueba
+ */
+adminRoutes.post('/admin/settings/test-email', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  
+  // Solo super_admin puede enviar correos de prueba
+  if (user.role !== 'super_admin') {
+    return c.text('No autorizado', 403);
+  }
+  
+  try {
+    const formData = await c.req.formData();
+    const testEmail = formData.get('test_email') as string;
+    
+    if (!testEmail || !testEmail.includes('@')) {
+      return c.text('Dirección de correo inválida', 400);
+    }
+    
+    const emailConfig = getEmailConfig(c.env);
+    
+    // Verificar que ZeptoMail esté configurado
+    if (emailConfig.apiToken === 'not-configured') {
+      return c.text('ZeptoMail no está configurado. Por favor configura ZEPTOMAIL_TOKEN.', 400);
+    }
+    
+    // Verificar que el envío de correos esté habilitado
+    const config = await getSystemConfig(c.env.DB);
+    if (!config.emailEnabled) {
+      return c.text('El envío de correos está deshabilitado. Habilítalo en la configuración.', 400);
+    }
+    
+    const appName = c.env.APP_NAME || 'ActionQ';
+    const appUrl = c.req.url.replace(/\/admin\/settings.*/, '');
+    
+    // Verificar si hay un template configurado para el proveedor
+    let result;
+    if (config.emailProvider === 'zeptomail') {
+      const templates = await getZeptoMailTemplates(c.env.DB);
+      
+      if (templates.testEmail) {
+        // Usar template de ZeptoMail
+        console.log('[Test Email] Usando template de ZeptoMail:', templates.testEmail);
+        result = await sendEmailWithTemplate(emailConfig, {
+          to: [{ email: testEmail }],
+          templateKey: templates.testEmail,
+          mergeInfo: {
+            recipient_email: testEmail,
+            app_name: appName,
+            app_url: appUrl,
+            test_date: new Date().toLocaleString('es-ES', { dateStyle: 'full', timeStyle: 'short' })
+          }
+        });
+      } else {
+        // Generar plantilla HTML automática
+        console.log('[Test Email] Usando HTML generado automáticamente (sin template configurado)');
+        const template = testEmailTemplate(testEmail, appName, appUrl);
+        result = await sendEmail(emailConfig, {
+          to: [{ email: testEmail }],
+          subject: template.subject,
+          htmlBody: template.html
+        });
+      }
+    } else {
+      // Si no es ZeptoMail o no hay proveedor, usar HTML
+      console.log('[Test Email] Usando HTML generado automáticamente');
+      const template = testEmailTemplate(testEmail, appName, appUrl);
+      result = await sendEmail(emailConfig, {
+        to: [{ email: testEmail }],
+        subject: template.subject,
+        htmlBody: template.html
+      });
+    }
+    
+    if (result.success) {
+      return c.redirect('/admin/settings?test_email_sent=true');
+    } else {
+      console.error('Test email error:', result.error);
+      return c.text(`Error al enviar correo: ${result.error}`, 500);
+    }
+    
+  } catch (error) {
+    console.error('Test email error:', error);
+    return c.text('Error al enviar correo de prueba', 500);
+  }
+});
+
+/**
+ * GET /admin/settings/email-provider - Configuración de plantillas del proveedor de email
+ */
+adminRoutes.get('/admin/settings/email-provider', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  
+  // Solo super_admin puede configurar proveedores
+  if (user.role !== 'super_admin') {
+    return c.text('No autorizado', 403);
+  }
+  
+  try {
+    const config = await getSystemConfig(c.env.DB);
+    
+    // Verificar que hay un proveedor seleccionado
+    if (!config.emailProvider) {
+      return c.redirect('/admin/settings');
+    }
+    
+    // Por ahora solo soportamos ZeptoMail
+    if (config.emailProvider !== 'zeptomail') {
+      return c.text('Proveedor no soportado', 400);
+    }
+    
+    const templates = await getZeptoMailTemplates(c.env.DB);
+    const saveSuccess = c.req.query('success') === 'true';
+    
+    return c.html(
+      <Layout title="Configuración de ZeptoMail" user={user}>
+        <div class="max-w-4xl mx-auto">
+          {/* Header con navegación */}
+          <div class="mb-6 flex items-center justify-between">
+            <a 
+              href="/admin/settings"
+              class="text-blue-600 hover:text-blue-800"
+            >
+              ← Volver a Configuración
+            </a>
+            <button
+              onclick="document.getElementById('variablesModal').classList.remove('hidden')"
+              class="px-4 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 transition-colors flex items-center gap-2"
+            >
+              📚 Variables Básicas
+            </button>
+          </div>
+          
+          <div class="bg-white rounded-lg shadow">
+            <div class="px-6 py-4 border-b border-gray-200">
+              <h1 class="text-2xl font-bold text-gray-900">⚙️ Configuración de ZeptoMail</h1>
+              <p class="text-sm text-gray-500 mt-1">
+                Configura las plantillas de ZeptoMail para diferentes tipos de correos.
+              </p>
+            </div>
+            
+            <div class="p-6">
+              {saveSuccess && (
+                <div class="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <p class="text-sm text-green-800">
+                    <strong>✅ Configuración guardada:</strong> Las plantillas de ZeptoMail se guardaron correctamente.
+                  </p>
+                </div>
+              )}
+              
+              {/* Información de ZeptoMail */}
+              <div class="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <p class="text-sm text-blue-800">
+                  <strong>ℹ️ Acerca de las plantillas:</strong> Las plantillas deben estar creadas en tu cuenta de ZeptoMail. 
+                  Puedes obtener el template key desde el dashboard de ZeptoMail en la sección de Templates.
+                </p>
+                <p class="text-sm text-blue-700 mt-2">
+                  <strong>💡 Tip:</strong> Haz clic en el botón "📚 Variables Básicas" arriba para ver todas las variables disponibles que puedes usar en tus plantillas.
+                </p>
+              </div>
+              
+              <form method="post" action="/admin/settings/email-provider/save" class="space-y-6">
+                {/* Template de Prueba */}
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    🧪 Plantilla de Correo de Prueba
+                  </label>
+                  <input 
+                    type="text"
+                    name="test_email"
+                    value={templates.testEmail}
+                    placeholder="2d6f.7af6fdbb5601d78b.k1.5dcff0c1-ff84-11f0-bfe0-1ae16fad91d9.19c19dd09ba"
+                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Template key para los correos de prueba del sistema.
+                  </p>
+                </div>
+                
+                {/* Template de Restablecimiento de Contraseña */}
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    � Plantilla de Verificación OTP
+                  </label>
+                  <input 
+                    type="text"
+                    name="otp"
+                    value={templates.otp}
+                    placeholder="2d6f.7af6fdbb5601d78b.k1...."
+                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Template key para los correos de verificación OTP (registro y restablecimiento de contraseña).
+                  </p>
+                </div>
+                
+                {/* Template de Notificaciones de Tickets */}
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-2">
+                    🎫 Plantilla de Notificaciones de Tickets
+                  </label>
+                  <input 
+                    type="text"
+                    name="ticket_notification"
+                    value={templates.ticketNotification}
+                    placeholder="2d6f.7af6fdbb5601d78b.k1...."
+                    class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono text-sm"
+                  />
+                  <p class="text-xs text-gray-500 mt-1">
+                    Template key para las notificaciones de tickets (nuevos, asignados, mensajes, cambios de estado).
+                  </p>
+                </div>
+                
+                {/* Botones de acción */}
+                <div class="flex gap-3 justify-end pt-4 border-t border-gray-200">
+                  <a 
+                    href="/admin/settings"
+                    class="px-6 py-2 text-gray-700 font-medium border border-gray-300 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancelar
+                  </a>
+                  <button 
+                    type="submit"
+                    class="px-6 py-2 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors"
+                  >
+                    💾 Guardar Plantillas
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+        
+        {/* Modal de Variables Básicas */}
+        <div id="variablesModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div class="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+            {/* Header del Modal */}
+            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between bg-purple-600 text-white">
+              <h2 class="text-xl font-bold">📚 Variables para Plantillas de Email</h2>
+              <button 
+                onclick="document.getElementById('variablesModal').classList.add('hidden')"
+                class="text-white hover:text-gray-200 text-2xl leading-none"
+              >
+                ×
+              </button>
+            </div>
+            
+            {/* Contenido del Modal */}
+            <div class="p-6 overflow-y-auto flex-1">
+              <p class="text-sm text-gray-600 mb-6">
+                Estas variables están disponibles para usar en tus plantillas HTML de ZeptoMail. 
+                Copia y pega las que necesites usando la sintaxis: <code class="px-2 py-1 bg-gray-100 rounded text-purple-600">{`{{variable_name}}`}</code>
+              </p>
+              
+              {/* Variables Globales */}
+              <div class="mb-8">
+                <h3 class="text-lg font-bold text-gray-900 mb-3 flex items-center gap-2">
+                  🌍 Variables Globales
+                  <span class="text-xs font-normal text-gray-500">(Disponibles en todas las plantillas)</span>
+                </h3>
+                <div class="bg-gray-50 rounded-lg p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-gray-300 rounded text-purple-600 font-mono text-sm">{`{{app_name}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Nombre de la aplicación</p>
+                      <p class="text-xs text-gray-500 mt-1">Ejemplo: ActionQ</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-gray-300 rounded text-purple-600 font-mono text-sm">{`{{app_url}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">URL de la aplicación</p>
+                      <p class="text-xs text-gray-500 mt-1">Ejemplo: https://actionq.example.com</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Variables de Prueba */}
+              <div class="mb-8">
+                <h3 class="text-lg font-bold text-gray-900 mb-3">🧪 Correo de Prueba</h3>
+                <div class="bg-green-50 rounded-lg p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-green-300 rounded text-green-700 font-mono text-sm">{`{{recipient_email}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Email del destinatario</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-green-300 rounded text-green-700 font-mono text-sm">{`{{test_date}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Fecha y hora del envío</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Variables de Password Reset */}
+              <div class="mb-8">
+                <h3 class="text-lg font-bold text-gray-900 mb-3">🔑 Restablecimiento de Contraseña</h3>
+                <div class="bg-yellow-50 rounded-lg p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-yellow-300 rounded text-yellow-700 font-mono text-sm">{`{{user_name}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Nombre del usuario</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-yellow-300 rounded text-yellow-700 font-mono text-sm">{`{{reset_url}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">URL para restablecer contraseña</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-yellow-300 rounded text-yellow-700 font-mono text-sm">{`{{expiration_time}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Tiempo de expiración del enlace</p>
+                      <p class="text-xs text-gray-500 mt-1">Ejemplo: "1 hora" o "24 horas"</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Variables de Tickets */}
+              <div class="mb-8">
+                <h3 class="text-lg font-bold text-gray-900 mb-3">🎫 Notificaciones de Tickets</h3>
+                <div class="bg-blue-50 rounded-lg p-4 space-y-3">
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-blue-300 rounded text-blue-700 font-mono text-sm">{`{{user_name}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Nombre del destinatario</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-blue-300 rounded text-blue-700 font-mono text-sm">{`{{notification_title}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Título de la notificación</p>
+                      <p class="text-xs text-gray-500 mt-1">Ejemplo: "Nuevo Ticket Asignado"</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-blue-300 rounded text-blue-700 font-mono text-sm">{`{{notification_message}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Mensaje descriptivo</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-blue-300 rounded text-blue-700 font-mono text-sm">{`{{ticket_id}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">ID del ticket</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-blue-300 rounded text-blue-700 font-mono text-sm">{`{{ticket_title}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Título del ticket</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-blue-300 rounded text-blue-700 font-mono text-sm">{`{{ticket_description}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Descripción del ticket</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-blue-300 rounded text-blue-700 font-mono text-sm">{`{{ticket_status}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Estado actual del ticket</p>
+                      <p class="text-xs text-gray-500 mt-1">Ejemplos: "Abierto", "En Progreso", "Cerrado"</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-blue-300 rounded text-blue-700 font-mono text-sm">{`{{ticket_url}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">URL directa al ticket</p>
+                    </div>
+                  </div>
+                  <div class="flex items-start gap-3">
+                    <code class="px-3 py-1 bg-white border border-blue-300 rounded text-blue-700 font-mono text-sm">{`{{tenant_name}}`}</code>
+                    <div class="flex-1">
+                      <p class="text-sm text-gray-700">Nombre de la organización</p>
+                    </div>
+                  </div>
+                  
+                  <div class="mt-4 pt-4 border-t border-blue-200">
+                    <p class="text-xs font-semibold text-blue-900 mb-2">Variables Opcionales:</p>
+                    <div class="space-y-2">
+                      <div class="flex items-start gap-3">
+                        <code class="px-2 py-1 bg-white border border-blue-200 rounded text-blue-600 font-mono text-xs">{`{{action_by}}`}</code>
+                        <p class="text-xs text-gray-600">Usuario que realizó la acción</p>
+                      </div>
+                      <div class="flex items-start gap-3">
+                        <code class="px-2 py-1 bg-white border border-blue-200 rounded text-blue-600 font-mono text-xs">{`{{action_date}}`}</code>
+                        <p class="text-xs text-gray-600">Fecha de la acción</p>
+                      </div>
+                      <div class="flex items-start gap-3">
+                        <code class="px-2 py-1 bg-white border border-blue-200 rounded text-blue-600 font-mono text-xs">{`{{message_content}}`}</code>
+                        <p class="text-xs text-gray-600">Contenido del último mensaje</p>
+                      </div>
+                      <div class="flex items-start gap-3">
+                        <code class="px-2 py-1 bg-white border border-blue-200 rounded text-blue-600 font-mono text-xs">{`{{priority}}`}</code>
+                        <p class="text-xs text-gray-600">Prioridad del ticket (Alta, Media, Baja)</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Sintaxis Condicional */}
+              <div class="mb-6">
+                <h3 class="text-lg font-bold text-gray-900 mb-3">📝 Sintaxis de ZeptoMail</h3>
+                <div class="bg-gray-50 rounded-lg p-4 space-y-4">
+                  <div>
+                    <p class="text-sm font-semibold text-gray-700 mb-2">Variables simples:</p>
+                    <code class="block px-3 py-2 bg-white border border-gray-300 rounded font-mono text-sm text-gray-800">{`{{variable_name}}`}</code>
+                  </div>
+                  <div>
+                    <p class="text-sm font-semibold text-gray-700 mb-2">Condicionales (solo mostrar si existe):</p>
+                    <code class="block px-3 py-2 bg-white border border-gray-300 rounded font-mono text-sm text-gray-800 whitespace-pre">{`{{#if variable_name}}
+  <p>Mostrar solo si existe</p>
+{{/if}}`}</code>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Recursos Adicionales */}
+              <div class="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                <p class="text-sm text-purple-900">
+                  <strong>📖 Documentación completa:</strong> Para ver ejemplos de código y más detalles, consulta el archivo 
+                  <code class="mx-1 px-2 py-1 bg-white rounded text-purple-700">email-templates/VARIABLES.md</code> en el repositorio.
+                </p>
+              </div>
+            </div>
+            
+            {/* Footer del Modal */}
+            <div class="px-6 py-4 border-t border-gray-200 bg-gray-50 flex justify-end">
+              <button 
+                onclick="document.getElementById('variablesModal').classList.add('hidden')"
+                class="px-6 py-2 bg-purple-600 text-white font-medium rounded-lg hover:bg-purple-700 transition-colors"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      </Layout>
+    );
+    
+  } catch (error) {
+    console.error('Email provider config error:', error);
+    return c.text('Error al cargar configuración', 500);
+  }
+});
+
+/**
+ * POST /admin/settings/email-provider/save - Guardar plantillas del proveedor
+ */
+adminRoutes.post('/admin/settings/email-provider/save', requireAdmin, async (c) => {
+  const user = c.get('user')!;
+  
+  // Solo super_admin puede configurar proveedores
+  if (user.role !== 'super_admin') {
+    return c.text('No autorizado', 403);
+  }
+  
+  try {
+    const formData = await c.req.formData();
+    const config = await getSystemConfig(c.env.DB);
+    
+    // Verificar que hay un proveedor seleccionado
+    if (!config.emailProvider) {
+      return c.text('No hay proveedor de correo seleccionado', 400);
+    }
+    
+    // Por ahora solo soportamos ZeptoMail
+    if (config.emailProvider === 'zeptomail') {
+      const templates = {
+        testEmail: (formData.get('test_email') as string || '').trim(),
+        otp: (formData.get('otp') as string || '').trim(),
+        ticketNotification: (formData.get('ticket_notification') as string || '').trim()
+      };
+      
+      const result = await setZeptoMailTemplates(c.env.DB, templates);
+      
+      if (!result.success) {
+        return c.text(result.error || 'Error al guardar plantillas', 400);
+      }
+      
+      return c.redirect('/admin/settings/email-provider?success=true');
+    }
+    
+    return c.text('Proveedor no soportado', 400);
+    
+  } catch (error) {
+    console.error('Save email provider config error:', error);
+    return c.text('Error al guardar configuración', 500);
+  }
+});
+
 export { adminRoutes };
+

@@ -38,6 +38,14 @@ export interface SendEmailParams {
   attachments?: EmailAttachment[];
 }
 
+export interface SendTemplateEmailParams {
+  to: EmailRecipient[];
+  templateKey: string;
+  mergeInfo?: Record<string, any>;
+  cc?: EmailRecipient[];
+  bcc?: EmailRecipient[];
+}
+
 interface ZeptoMailResponse {
   data?: {
     message: string;
@@ -70,9 +78,8 @@ export async function sendEmail(
   }
   
   try {
+    // Payload simplificado - exactamente como el ejemplo oficial de ZeptoMail
     const payload = {
-      // Bounce address (Agent Alias) - requerido por ZeptoMail
-      bounce_address: config.bounceAddress,
       from: {
         address: config.fromEmail,
         name: config.fromName
@@ -84,14 +91,112 @@ export async function sendEmail(
         }
       })),
       subject: params.subject,
-      htmlbody: params.htmlBody,
-      textbody: params.textBody || stripHtml(params.htmlBody),
-      ...(config.replyTo && {
-        reply_to: {
-          address: config.replyTo,
-          name: config.fromName
+      htmlbody: params.htmlBody
+    };
+    
+    console.log('[Email] Enviando a:', params.to.map(r => r.email).join(', '));
+    console.log('[Email] Subject:', params.subject);
+    console.log('[Email] From:', config.fromEmail);
+    
+    // El token DEBE incluir el prefijo "Zoho-enczapikey"
+    // Si ya lo tiene, usarlo tal cual; si no, agregarlo
+    const authToken = config.apiToken.trim();
+    
+    console.log('[Email] Token starts with Zoho:', authToken.startsWith('Zoho-enczapikey'));
+    console.log('[Email] Token length:', authToken.length);
+    
+    const response = await fetch('https://api.zeptomail.com/v1.1/email', {
+      method: 'POST',
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        'Authorization': authToken
+      },
+      body: JSON.stringify(payload)
+    });
+    
+    // Leer la respuesta como texto primero para manejar respuestas vacías
+    const responseText = await response.text();
+    console.log('[Email] Response status:', response.status);
+    console.log('[Email] Response body:', responseText.substring(0, 500));
+    
+    // Si la respuesta está vacía
+    if (!responseText || responseText.trim() === '') {
+      if (response.ok) {
+        // Algunos APIs devuelven vacío en éxito
+        return { success: true, requestId: 'no-request-id' };
+      }
+      return {
+        success: false,
+        error: `Error HTTP ${response.status}: Respuesta vacía del servidor`
+      };
+    }
+    
+    // Intentar parsear como JSON
+    let result: ZeptoMailResponse;
+    try {
+      result = JSON.parse(responseText) as ZeptoMailResponse;
+    } catch {
+      return {
+        success: false,
+        error: `Error al parsear respuesta: ${responseText.substring(0, 200)}`
+      };
+    }
+    
+    if (!response.ok || result.error) {
+      console.error('[Email] Error de ZeptoMail:', result.error);
+      return {
+        success: false,
+        error: result.error?.message || `Error HTTP ${response.status}`,
+        requestId: result.error?.request_id
+      };
+    }
+    
+    console.log('[Email] Enviado correctamente:', result.data?.request_id);
+    return {
+      success: true,
+      requestId: result.data?.request_id
+    };
+    
+  } catch (error) {
+    console.error('[Email] Error de conexión:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Error de conexión'
+    };
+  }
+}
+
+/**
+ * Envía un correo electrónico usando una plantilla de ZeptoMail
+ * Documentación: https://www.zoho.com/zeptomail/help/api/email-templates.html
+ */
+export async function sendEmailWithTemplate(
+  config: EmailConfig,
+  params: SendTemplateEmailParams
+): Promise<{ success: boolean; error?: string; requestId?: string }> {
+  
+  // Si no hay token configurado, no enviar (modo desarrollo)
+  if (!config.apiToken || config.apiToken === 'not-configured') {
+    console.log('[Email] Token no configurado, saltando envío de template:', params.templateKey);
+    return { success: true, requestId: 'dev-mode' };
+  }
+  
+  try {
+    const payload = {
+      template_key: params.templateKey,
+      from: {
+        address: config.fromEmail,
+        name: config.fromName
+      },
+      to: params.to.map(r => ({
+        email_address: {
+          address: r.email,
+          name: r.name || r.email
         }
-      }),
+      })),
+      // merge_info va al nivel superior, no dentro de cada destinatario
+      ...(params.mergeInfo && { merge_info: params.mergeInfo }),
       ...(params.cc && params.cc.length > 0 && {
         cc: params.cc.map(r => ({
           email_address: {
@@ -110,35 +215,63 @@ export async function sendEmail(
       })
     };
     
-    const response = await fetch('https://api.zeptomail.com/v1.1/email', {
+    console.log('[Email] Enviando template:', params.templateKey);
+    console.log('[Email] To:', params.to.map(r => r.email).join(', '));
+    console.log('[Email] From:', config.fromEmail);
+    
+    const authToken = config.apiToken.trim();
+    
+    const response = await fetch('https://api.zeptomail.com/v1.1/email/template', {
       method: 'POST',
       headers: {
         'Accept': 'application/json',
         'Content-Type': 'application/json',
-        'Authorization': `Zoho-enczapikey ${config.apiToken}`
+        'Authorization': authToken
       },
       body: JSON.stringify(payload)
     });
     
-    const result = await response.json() as ZeptoMailResponse;
+    const responseText = await response.text();
+    console.log('[Email] Template response status:', response.status);
+    console.log('[Email] Template response body:', responseText.substring(0, 500));
     
-    if (!response.ok || result.error) {
-      console.error('[Email] Error de ZeptoMail:', result.error);
+    if (!responseText || responseText.trim() === '') {
+      if (response.ok) {
+        return { success: true, requestId: 'no-request-id' };
+      }
       return {
         success: false,
-        error: result.error?.message || 'Error desconocido al enviar email',
+        error: `Error HTTP ${response.status}: Respuesta vacía del servidor`
+      };
+    }
+    
+    let result: ZeptoMailResponse;
+    try {
+      result = JSON.parse(responseText) as ZeptoMailResponse;
+    } catch {
+      return {
+        success: false,
+        error: `Error al parsear respuesta: ${responseText.substring(0, 200)}`
+      };
+    }
+    
+    if (!response.ok || result.error) {
+      console.error('[Email] Error de ZeptoMail template:', result.error);
+      return {
+        success: false,
+        error: result.error?.message || `Error HTTP ${response.status}`,
         requestId: result.error?.request_id
       };
     }
     
-    console.log('[Email] Enviado correctamente:', result.data?.request_id);
+    console.log('[Email] Template enviado correctamente:', result.data?.request_id);
     return {
       success: true,
       requestId: result.data?.request_id
     };
     
   } catch (error) {
-    console.error('[Email] Error de conexión:', error);
+    console.error('[Email] Error de conexión con template:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error de conexión'
@@ -403,6 +536,49 @@ export function ticketStatusChangeEmailTemplate(
   
   return {
     subject: `[${newStatus}] Ticket #${ticketId}: ${ticketTitle}`,
+    html: emailTemplate(content, appName)
+  };
+}
+
+/**
+ * Email de prueba de configuración
+ */
+export function testEmailTemplate(
+  recipientEmail: string,
+  appName: string,
+  appUrl: string
+): { subject: string; html: string } {
+  const content = `
+    <h2 style="margin: 0 0 20px 0; color: #111827; font-size: 20px;">✅ Prueba de Correo Exitosa</h2>
+    <p style="margin: 0 0 16px 0; color: #374151; line-height: 1.6;">
+      ¡Felicidades! El servicio de correo electrónico de <strong>${appName}</strong> está configurado correctamente.
+    </p>
+    <table style="margin: 20px 0; background-color: #d1fae5; border-radius: 8px; width: 100%; border-left: 4px solid #10b981;">
+      <tr>
+        <td style="padding: 20px;">
+          <p style="margin: 0 0 8px 0; color: #065f46; font-size: 14px;">📧 Enviado a:</p>
+          <p style="margin: 0 0 16px 0; color: #065f46; font-weight: 600;">${recipientEmail}</p>
+          <p style="margin: 0 0 8px 0; color: #065f46; font-size: 14px;">🕐 Fecha:</p>
+          <p style="margin: 0; color: #065f46; font-weight: 600;">${new Date().toLocaleString('es-ES', { dateStyle: 'full', timeStyle: 'short' })}</p>
+        </td>
+      </tr>
+    </table>
+    <p style="margin: 0 0 24px 0; color: #374151; line-height: 1.6;">
+      Las notificaciones por email están habilitadas y funcionando. Los usuarios recibirán:
+    </p>
+    <ul style="margin: 0 0 24px 0; padding-left: 20px; color: #374151;">
+      <li style="margin-bottom: 8px;">Email de bienvenida al registrarse</li>
+      <li style="margin-bottom: 8px;">Notificaciones de nuevos tickets</li>
+      <li style="margin-bottom: 8px;">Alertas de mensajes nuevos</li>
+      <li style="margin-bottom: 8px;">Cambios de estado en tickets</li>
+    </ul>
+    <a href="${appUrl}" style="display: inline-block; padding: 12px 24px; background-color: #3b82f6; color: #ffffff; text-decoration: none; border-radius: 6px; font-weight: 600;">
+      Ir a ${appName}
+    </a>
+  `;
+  
+  return {
+    subject: `[${appName}] ✅ Prueba de correo exitosa`,
     html: emailTemplate(content, appName)
   };
 }

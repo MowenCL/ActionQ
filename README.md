@@ -15,10 +15,11 @@ ActionQ es una **plantilla reutilizable (boilerplate)** para crear sistemas de g
 ### Características
 
 - ✅ **Multi-tenant**: Soporte para múltiples organizaciones aisladas
-- 🔐 **Autenticación segura**: Sesiones con cookies firmadas
+- 🔐 **Autenticación segura**: Sesiones con cookies firmadas + OTP por email
 - 🎨 **UI moderna**: TailwindCSS + HTMX (vía CDN, sin build)
 - 🚀 **Serverless**: Cloudflare Workers (edge computing global)
 - 💾 **Base de datos**: Cloudflare D1 (SQLite distribuido)
+- 🔑 **KV Storage**: Códigos OTP temporales con expiración automática
 - 📦 **Zero Config**: Solo configura variables y despliega
 - 🔧 **First-Run Setup**: Wizard de configuración inicial automático
 - 🤖 **Auto-asignación de Tickets**: Asignación automática a agentes con menor carga
@@ -33,8 +34,9 @@ ActionQ es una **plantilla reutilizable (boilerplate)** para crear sistemas de g
 | **Runtime** | Cloudflare Workers |
 | **Framework** | Hono.js v4 (con JSX/SSR) |
 | **Base de Datos** | Cloudflare D1 (SQLite) |
+| **KV Storage** | Cloudflare KV (para OTP) |
 | **Frontend** | HTML + TailwindCSS (CDN) + HTMX (CDN) |
-| **Autenticación** | Cookies firmadas con SHA-256 |
+| **Autenticación** | Cookies firmadas con SHA-256 + OTP |
 
 ---
 
@@ -136,7 +138,29 @@ database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
 **📝 Copia el `database_id`** y pégalo en tu archivo `wrangler.toml`.
 
-### Paso 5: Ejecutar el Esquema de Base de Datos
+### Paso 5: Crear el Namespace KV para OTP
+
+ActionQ utiliza Cloudflare KV (Key-Value storage) para almacenar códigos OTP temporales:
+
+```bash
+npx wrangler kv namespace create OTP_STORE
+```
+
+Esto te dará un output como:
+
+```toml
+{ binding = "OTP_STORE", id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" }
+```
+
+**📝 Copia el `id`** y agrégalo a tu archivo `wrangler.toml` en la sección `kv_namespaces`:
+
+```toml
+[[kv_namespaces]]
+binding = "OTP_STORE"
+id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+```
+
+### Paso 6: Ejecutar el Esquema de Base de Datos
 
 Para **desarrollo local**:
 
@@ -150,7 +174,7 @@ Para **producción**:
 npm run db:remote
 ```
 
-### Paso 6: Configurar Variables de Entorno
+### Paso 7: Configurar Variables de Entorno
 
 #### Para Desarrollo Local
 
@@ -193,7 +217,9 @@ npx wrangler secret put ADMIN_INIT_PASSWORD
 # Ingresa la contraseña temporal
 ```
 
-### Paso 7: Iniciar en Desarrollo
+> 💡 **Nota sobre OTP**: El KV namespace `OTP_STORE` se utiliza para almacenar códigos de verificación OTP (One-Time Password) temporales durante el registro y restablecimiento de contraseña. Los códigos expiran automáticamente después de 15 minutos.
+
+### Paso 8: Iniciar en Desarrollo
 
 ```bash
 npm run dev
@@ -201,7 +227,7 @@ npm run dev
 
 Abre http://localhost:8787 en tu navegador.
 
-### Paso 8: Desplegar a Producción
+### Paso 9: Desplegar a Producción
 
 ```bash
 npm run deploy
@@ -225,7 +251,143 @@ Cuando accedas por primera vez a la aplicación:
 
 ---
 
-## 📊 Esquema de Base de Datos
+## � Configuración de Correos (Opcional)
+
+ActionQ soporta notificaciones por email usando **ZeptoMail** de Zoho. Esta configuración es completamente opcional.
+
+### ¿Qué son los correos transaccionales?
+
+Los correos transaccionales son emails automáticos enviados en respuesta a acciones del usuario (bienvenida, notificaciones de tickets, cambios de estado, etc.). **No confundir con emails masivos o marketing**.
+
+### Tipos de Notificaciones
+
+Cuando se configura el servicio de email, ActionQ envía automáticamente:
+
+- ✉️ **Email de bienvenida** al registrar nuevos usuarios
+- 🎫 **Notificación de nuevo ticket** a los agentes del equipo interno
+- 📌 **Ticket asignado** cuando se asigna un ticket a un agente
+- 💬 **Nuevo mensaje** cuando se añade un mensaje a un ticket
+- 🔄 **Cambio de estado** cuando un ticket cambia de estado
+
+### Crear Cuenta en ZeptoMail
+
+1. Ve a [ZeptoMail](https://www.zoho.com/zeptomail/) y crea una cuenta gratuita
+2. Completa el proceso de verificación de tu dominio
+3. Crea un **Agent** (agente de envío) en el dashboard
+
+### Obtener Credenciales de ZeptoMail
+
+Una vez en el dashboard de ZeptoMail:
+
+1. Selecciona tu **Agent** (agente de envío)
+2. Ve a la pestaña **SMTP/API**
+3. Anota los siguientes valores:
+
+| Credencial | Ubicación en ZeptoMail | Ejemplo |
+|------------|------------------------|---------|
+| **Token de envío** | SMTP/API → Send Mail Token | `Zoho-enczapikey wSsVR60k...` |
+| **Dirección de remitente** | SMTP/API → From Address | `noreply@tudominio.com` |
+| **Nombre del remitente** | - | `ActionQ` o tu nombre de empresa |
+
+> 📌 **Nota**: El token **incluye el prefijo** `Zoho-enczapikey` - cópialo completo tal cual aparece.
+
+### Configurar Variables de Entorno
+
+#### Para Desarrollo Local
+
+Añade a tu archivo `.dev.vars`:
+
+```env
+# Configuración de ZeptoMail (opcional)
+ZEPTOMAIL_TOKEN=Zoho-enczapikey wSsVR60k/xSmCPt0yTf+...
+ZEPTOMAIL_FROM_EMAIL=noreply@tudominio.com
+ZEPTOMAIL_FROM_NAME=ActionQ
+```
+
+#### Para Producción
+
+Configura los secretos en Cloudflare:
+
+```bash
+# Token completo con el prefijo "Zoho-enczapikey"
+npx wrangler secret put ZEPTOMAIL_TOKEN
+
+# Email de remitente (debe estar verificado en ZeptoMail)
+npx wrangler secret put ZEPTOMAIL_FROM_EMAIL
+
+# Nombre que aparecerá como remitente
+npx wrangler secret put ZEPTOMAIL_FROM_NAME
+```
+
+### Activar el Envío de Correos
+
+Una vez configuradas las credenciales:
+
+1. Inicia sesión como `super_admin`
+2. Ve a **Panel de Administración** → **Configuración del Sistema** (`/admin/settings`)
+3. En la sección **📧 Correos Electrónicos**:
+   - Verifica que el indicador muestre "✅ ZeptoMail configurado"
+   - Activa el toggle "Habilitar envío de correos"
+   - Selecciona **ZeptoMail** como proveedor
+   - Haz clic en **💾 Guardar Todos los Cambios**
+
+### Configurar Plantillas de Email (Opcional)
+
+ActionQ incluye plantillas HTML prediseñadas para ZeptoMail:
+
+1. **Plantillas disponibles** (en `/email-templates/`):
+   - `test-email.html` - Correo de prueba
+   - `password-reset.html` - Restablecimiento de contraseña
+   - `ticket-notification.html` - Notificaciones de tickets
+
+2. **Crear plantillas en ZeptoMail**:
+   - Ve al [Dashboard de ZeptoMail](https://mail.zoho.com/zm/zeptomail)
+   - Email Templates → Create Template
+   - Copia y pega el contenido de los archivos `.html`
+   - Guarda y obtén el **template key**
+
+3. **Configurar template keys en ActionQ**:
+   - Ve a `/admin/settings`
+   - En la sección de correos, haz clic en **⚙️ Configurar**
+   - Pega los template keys correspondientes
+   - Guarda los cambios
+
+> 📚 **Documentación de Variables**: Consulta [email-templates/VARIABLES.md](email-templates/VARIABLES.md) para ver todas las variables disponibles y cómo crear plantillas personalizadas.
+
+### Probar el Envío de Correos
+
+Para verificar que todo funciona correctamente:
+
+1. En `/admin/settings`, ve a la sección **🧪 Prueba de Correo**
+2. Ingresa una dirección de email de prueba
+3. Haz clic en **📤 Enviar Prueba**
+4. Revisa tu bandeja de entrada (y spam por si acaso)
+
+Si recibes el correo de prueba, ¡ya está todo configurado! 🎉
+
+### Solución de Problemas
+
+| Error | Solución |
+|-------|----------|
+| "Access Denied" | Verifica que el token esté completo con el prefijo `Zoho-enczapikey` |
+| "Sender not authorized" | Asegúrate de que el dominio de `ZEPTOMAIL_FROM_EMAIL` esté verificado en ZeptoMail |
+| "ZeptoMail no configurado" | Revisa que las variables de entorno estén correctamente guardadas |
+| No llegan correos | Revisa que el toggle esté activado en `/admin/settings` |
+| Template errors | Verifica que los template keys sean correctos en `/admin/settings/email-provider` |
+
+### Deshabilitar Correos Temporalmente
+
+Si necesitas deshabilitar temporalmente el envío sin eliminar la configuración:
+
+1. Ve a `/admin/settings`
+2. Desactiva el toggle "Habilitar envío de correos"
+3. Guarda los cambios
+
+Los correos no se enviarán, pero la configuración se mantendrá guardada.
+
+---
+
+## �📊 Esquema de Base de Datos
 
 ### Tablas
 
@@ -348,7 +510,7 @@ Cierra automáticamente tickets pendientes después de un número configurable d
 ## 🗺️ Roadmap
 
 - [ ] Gestión de usuarios desde panel admin
-- [ ] Notificaciones por email
+- [x] Notificaciones por email (ZeptoMail)
 - [ ] API REST para integraciones
 - [ ] Exportación de tickets (CSV/PDF)
 - [ ] Búsqueda avanzada con filtros

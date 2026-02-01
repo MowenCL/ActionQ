@@ -13,6 +13,27 @@ export interface SystemConfig {
   sessionTimeoutMinutes: number;
   pendingAutoResolveDays: number;
   autoAssignEnabled: boolean;
+  emailEnabled: boolean;
+  emailProvider: 'smtp' | 'zeptomail' | '';
+  emailTestTemplateKey: string;
+  otpEnabled: boolean;
+}
+
+export interface EmailProviderConfig {
+  provider: 'smtp' | 'zeptomail';
+  // ZeptoMail template keys
+  zeptomail?: {
+    testEmailTemplate: string;
+    passwordResetTemplate: string;
+    ticketNotificationTemplate: string;
+  };
+  // SMTP config (para futuro)
+  smtp?: {
+    host: string;
+    port: number;
+    user: string;
+    secure: boolean;
+  };
 }
 
 /**
@@ -21,7 +42,7 @@ export interface SystemConfig {
 export async function getSystemConfig(db: D1Database): Promise<SystemConfig> {
   try {
     const configs = await db
-      .prepare("SELECT key, value FROM system_config WHERE key IN ('timezone', 'session_timeout_minutes', 'pending_auto_resolve_days', 'auto_assign_enabled')")
+      .prepare("SELECT key, value FROM system_config WHERE key IN ('timezone', 'session_timeout_minutes', 'pending_auto_resolve_days', 'auto_assign_enabled', 'email_enabled', 'email_provider', 'email_test_template_key', 'otp_enabled')")
       .all<{ key: string; value: string }>();
     
     const configMap = new Map(configs.results?.map(r => [r.key, r.value]) || []);
@@ -36,14 +57,22 @@ export async function getSystemConfig(db: D1Database): Promise<SystemConfig> {
         configMap.get('pending_auto_resolve_days') || String(DEFAULT_PENDING_AUTO_RESOLVE_DAYS),
         10
       ),
-      autoAssignEnabled: configMap.get('auto_assign_enabled') === 'true'
+      autoAssignEnabled: configMap.get('auto_assign_enabled') === 'true',
+      emailEnabled: configMap.get('email_enabled') === 'true',
+      emailProvider: (configMap.get('email_provider') || '') as 'smtp' | 'zeptomail' | '',
+      emailTestTemplateKey: configMap.get('email_test_template_key') || '',
+      otpEnabled: configMap.get('otp_enabled') === 'true'
     };
   } catch {
     return {
       timezone: 'UTC',
       sessionTimeoutMinutes: DEFAULT_SESSION_TIMEOUT_MINUTES,
       pendingAutoResolveDays: DEFAULT_PENDING_AUTO_RESOLVE_DAYS,
-      autoAssignEnabled: false
+      autoAssignEnabled: false,
+      emailEnabled: false,
+      emailProvider: '',
+      emailTestTemplateKey: '',
+      otpEnabled: false
     };
   }
 }
@@ -146,6 +175,119 @@ export async function setAutoAssignEnabled(
 }
 
 /**
+ * Guarda la configuración de envío de emails
+ */
+export async function setEmailEnabled(
+  db: D1Database, 
+  enabled: boolean
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await setSystemConfig(db, 'email_enabled', enabled ? 'true' : 'false');
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: 'Error al guardar en la base de datos' };
+  }
+}
+
+/**
+ * Establece el proveedor de correo
+ */
+export async function setEmailProvider(
+  db: D1Database, 
+  provider: 'smtp' | 'zeptomail' | ''
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await setSystemConfig(db, 'email_provider', provider);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: 'Error al guardar en la base de datos' };
+  }
+}
+
+/**
+ * Guarda la configuración de OTP
+ */
+export async function setOtpEnabled(
+  db: D1Database, 
+  enabled: boolean
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await setSystemConfig(db, 'otp_enabled', enabled ? 'true' : 'false');
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: 'Error al guardar en la base de datos' };
+  }
+}
+
+/**
+ * Obtiene la configuración de templates de ZeptoMail
+ */
+export async function getZeptoMailTemplates(db: D1Database): Promise<{
+  testEmail: string;
+  otp: string;
+  ticketNotification: string;
+}> {
+  try {
+    const configs = await db
+      .prepare("SELECT key, value FROM system_config WHERE key IN ('zeptomail_template_test', 'zeptomail_template_otp', 'zeptomail_template_ticket_notification')")
+      .all<{ key: string; value: string }>();
+    
+    const configMap = new Map(configs.results?.map(r => [r.key, r.value]) || []);
+    
+    return {
+      testEmail: configMap.get('zeptomail_template_test') || '',
+      otp: configMap.get('zeptomail_template_otp') || '',
+      ticketNotification: configMap.get('zeptomail_template_ticket_notification') || ''
+    };
+  } catch {
+    return {
+      testEmail: '',
+      otp: '',
+      ticketNotification: ''
+    };
+  }
+}
+
+/**
+ * Establece las template keys de ZeptoMail
+ */
+export async function setZeptoMailTemplates(
+  db: D1Database, 
+  templates: {
+    testEmail?: string;
+    otp?: string;
+    ticketNotification?: string;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const updates: Promise<D1Result>[] = [];
+    
+    if (templates.testEmail !== undefined) {
+      updates.push(
+        setSystemConfig(db, 'zeptomail_template_test', templates.testEmail)
+      );
+    }
+    
+    if (templates.otp !== undefined) {
+      updates.push(
+        setSystemConfig(db, 'zeptomail_template_otp', templates.otp)
+      );
+    }
+    
+    if (templates.ticketNotification !== undefined) {
+      updates.push(
+        setSystemConfig(db, 'zeptomail_template_ticket_notification', templates.ticketNotification)
+      );
+    }
+    
+    await Promise.all(updates);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: 'Error al guardar en la base de datos' };
+  }
+}
+
+/**
  * Obtiene el agente disponible con menos tickets activos asignados
  * Solo considera agentes activos (super_admin, agent_admin, agent)
  */
@@ -211,4 +353,27 @@ export async function autoClosePendingTickets(db: D1Database): Promise<number> {
   }
   
   return ticketIds.length;
+}
+
+/**
+ * Guarda el template key de correo de prueba
+ */
+export async function setEmailTestTemplateKey(
+  db: D1Database,
+  templateKey: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await db
+      .prepare("INSERT INTO system_config (key, value) VALUES ('email_test_template_key', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value")
+      .bind(templateKey)
+      .run();
+    
+    return { success: true };
+  } catch (error) {
+    console.error('setEmailTestTemplateKey error:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Error desconocido'
+    };
+  }
 }

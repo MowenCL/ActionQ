@@ -17,6 +17,9 @@ export type Bindings = {
   // Base de datos D1
   DB: D1Database;
   
+  // Cloudflare KV - Almacenamiento de OTPs
+  OTP_STORE: KVNamespace;
+  
   // Secretos (configurados con `wrangler secret put`)
   APP_SECRET: string;
   ADMIN_INIT_EMAIL: string;

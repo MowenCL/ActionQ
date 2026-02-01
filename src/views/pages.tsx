@@ -147,13 +147,23 @@ export const LoginPage: FC<LoginPageProps> = ({ error }) => {
         </button>
       </form>
       
-      <div class="mt-6 text-center">
-        <p class="text-sm text-gray-600">
-          ¿No tienes cuenta?{' '}
-          <a href="/register" class="text-blue-600 hover:text-blue-700 font-medium">
-            Regístrate
-          </a>
-        </p>
+      <div class="mt-6 text-center space-y-3">
+        <div>
+          <p class="text-sm text-gray-600">
+            ¿No tienes cuenta?{' '}
+            <a href="/register" class="text-blue-600 hover:text-blue-700 font-medium">
+              Regístrate
+            </a>
+          </p>
+        </div>
+        <div class="border-t border-gray-200 pt-3">
+          <p class="text-sm text-gray-600">
+            ¿Olvidaste tu contraseña?{' '}
+            <a href="/reset-password" class="text-blue-600 hover:text-blue-700 font-medium">
+              Restablece aquí
+            </a>
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -166,9 +176,24 @@ export const LoginPage: FC<LoginPageProps> = ({ error }) => {
 interface RegisterPageProps {
   error?: string;
   success?: boolean;
+  step?: 'email' | 'otp' | 'form';
+  email?: string;
+  otpRequired?: boolean;
+  otpResent?: boolean;
+  requestsRemaining?: number;
+  nextRequestIn?: number;
 }
 
-export const RegisterPage: FC<RegisterPageProps> = ({ error, success }) => {
+export const RegisterPage: FC<RegisterPageProps> = ({ 
+  error, 
+  success, 
+  step = 'email',
+  email = '',
+  otpRequired = true,
+  otpResent = false,
+  requestsRemaining = 3,
+  nextRequestIn = 60
+}) => {
   return (
     <div class="max-w-md w-full bg-white rounded-xl shadow-lg p-8">
       <div class="text-center mb-8">
@@ -185,6 +210,14 @@ export const RegisterPage: FC<RegisterPageProps> = ({ error, success }) => {
         </div>
       )}
       
+      {otpResent && !error && (
+        <div class="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+          <p class="text-sm text-green-600">
+            ✅ Nuevo código enviado. Revisa tu correo.
+          </p>
+        </div>
+      )}
+      
       {success && (
         <div class="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
           <p class="text-sm text-green-600">
@@ -194,21 +227,9 @@ export const RegisterPage: FC<RegisterPageProps> = ({ error, success }) => {
         </div>
       )}
       
-      {!success && (
+      {!success && step === 'email' && (
+        /* Paso 1: Solicitar email */
         <form method="post" action="/register" class="space-y-6">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              Nombre completo
-            </label>
-            <input 
-              type="text" 
-              name="name"
-              required
-              placeholder="Tu nombre"
-              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            />
-          </div>
-          
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">
               Email corporativo
@@ -223,6 +244,140 @@ export const RegisterPage: FC<RegisterPageProps> = ({ error, success }) => {
             <p class="mt-1 text-xs text-gray-500">
               Usa tu email corporativo autorizado
             </p>
+          </div>
+          
+          <button 
+            type="submit"
+            class="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+          >
+            Continuar
+          </button>
+        </form>
+      )}
+      
+      {!success && step === 'otp' && (
+        <>
+        <form 
+          method="post" 
+          action="/register"
+          class="space-y-6"
+        >
+          <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <p class="text-sm text-blue-900">
+              Se ha enviado un código de 6 dígitos a <strong>{email}</strong>
+            </p>
+          </div>
+          
+          <input type="hidden" name="email" value={email} />
+          <input type="hidden" name="step" value="otp" />
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              Código OTP
+            </label>
+            <input 
+              type="text" 
+              name="code"
+              required
+              maxLength={6}
+              pattern="[0-9]{6}"
+              placeholder="000000"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center text-2xl tracking-widest font-mono"
+            />
+            <p class="mt-1 text-xs text-gray-500">
+              El código expirará en 15 minutos
+            </p>
+          </div>
+          
+          <button 
+            type="submit"
+            class="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+          >
+            Verificar Código
+          </button>
+          
+          {requestsRemaining && requestsRemaining < 3 && (
+            <div class="p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <p class="text-xs text-amber-800">
+                ℹ️ Solicitudes de código restantes: <strong>{requestsRemaining}/{3}</strong>
+              </p>
+            </div>
+          )}
+          
+          {requestsRemaining === 0 && (
+            <div class="p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p class="text-xs text-red-800">
+                🚫 Has alcanzado el límite de solicitudes de OTP. Por favor, intenta de nuevo más tarde.
+              </p>
+            </div>
+          )}
+        </form>
+          
+        <form method="post" action="/register" class="mt-4">
+          <input type="hidden" name="email" value={email} />
+          <input type="hidden" name="step" value="email" />
+          <input type="hidden" name="resend" value="true" />
+          <button 
+            type="submit"
+            id="resend-btn"
+            disabled={nextRequestIn > 0}
+            class="w-full py-2 px-4 text-blue-600 font-medium hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors disabled:text-gray-400 disabled:cursor-not-allowed disabled:bg-gray-50"
+          >
+            <span id="resend-text">🔄 Solicitar nuevo código</span>
+            <span id="countdown" style={nextRequestIn > 0 ? '' : 'display:none'}>
+              ({nextRequestIn}s)
+            </span>
+          </button>
+        </form>
+        
+        <script dangerouslySetInnerHTML={{__html: `
+          (function() {
+            let timeLeft = ${nextRequestIn};
+            const btn = document.getElementById('resend-btn');
+            const countdown = document.getElementById('countdown');
+            
+            if (!btn || !countdown) {
+              console.error('Countdown elements not found');
+              return;
+            }
+            
+            function updateCountdown() {
+              if (timeLeft > 0) {
+                countdown.textContent = '(' + timeLeft + 's)';
+                countdown.style.display = 'inline';
+                timeLeft--;
+                setTimeout(updateCountdown, 1000);
+              } else {
+                countdown.style.display = 'none';
+                btn.removeAttribute('disabled');
+              }
+            }
+            
+            if (timeLeft > 0) {
+              updateCountdown();
+            }
+          })();
+        `}} />
+        </>
+      )}
+      
+      {!success && step === 'form' && (
+        /* Paso 3: Datos de registro */
+        <form method="post" action="/register" class="space-y-6">
+          <input type="hidden" name="step" value="complete" />
+          <input type="hidden" name="email" value={email} />
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              Nombre completo
+            </label>
+            <input 
+              type="text" 
+              name="name"
+              required
+              placeholder="Tu nombre"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
           </div>
           
           <div>
@@ -265,6 +420,252 @@ export const RegisterPage: FC<RegisterPageProps> = ({ error, success }) => {
       <div class="mt-6 text-center">
         <p class="text-sm text-gray-600">
           ¿Ya tienes cuenta?{' '}
+          <a href="/login" class="text-blue-600 hover:text-blue-700 font-medium">
+            Inicia sesión
+          </a>
+        </p>
+      </div>
+    </div>
+  );
+};
+
+// ================================================
+// PÁGINA DE RESTABLECIMIENTO DE CONTRASEÑA
+// ================================================
+
+interface ResetPasswordPageProps {
+  error?: string;
+  success?: boolean;
+  step?: 'email' | 'otp' | 'form';
+  email?: string;
+  otpResent?: boolean;
+  requestsRemaining?: number;
+  nextRequestIn?: number;
+}
+
+export const ResetPasswordPage: FC<ResetPasswordPageProps> = ({ 
+  error, 
+  success, 
+  step = 'email',
+  email = '',
+  otpResent = false,
+  requestsRemaining = 3,
+  nextRequestIn = 60
+}) => {
+  return (
+    <div class="max-w-md w-full bg-white rounded-xl shadow-lg p-8">
+      <div class="text-center mb-8">
+        <span class="text-5xl">🔑</span>
+        <h1 class="mt-4 text-2xl font-bold text-gray-900">Restablecer Contraseña</h1>
+        <p class="mt-2 text-sm text-gray-600">
+          Recupera acceso a tu cuenta
+        </p>
+      </div>
+      
+      {error && (
+        <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <p class="text-sm text-red-600">{error}</p>
+        </div>
+      )}
+      
+      {otpResent && !error && (
+        <div class="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+          <p class="text-sm text-green-600">
+            ✅ Nuevo código enviado. Revisa tu correo.
+          </p>
+        </div>
+      )}
+      
+      {success && (
+        <div class="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+          <p class="text-sm text-green-600">
+            ✅ Contraseña actualizada exitosamente.{' '}
+            <a href="/login" class="font-medium underline">Inicia sesión</a>
+          </p>
+        </div>
+      )}
+      
+      {!success && step === 'email' && (
+        /* Paso 1: Solicitar email */
+        <form method="post" action="/reset-password" class="space-y-6">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              Email de la cuenta
+            </label>
+            <input 
+              type="email" 
+              name="email"
+              required
+              placeholder="tu@empresa.com"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+            <p class="mt-1 text-xs text-gray-500">
+              Recibirás un código en este email
+            </p>
+          </div>
+          
+          <button 
+            type="submit"
+            class="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+          >
+            Continuar
+          </button>
+        </form>
+      )}
+      
+      {!success && step === 'otp' && (
+        <>
+        <form 
+          method="post" 
+          action="/reset-password" 
+          class="space-y-6"
+        >
+          <div class="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <p class="text-sm text-blue-900">
+              Se ha enviado un código de 6 dígitos a <strong>{email}</strong>
+            </p>
+          </div>
+          
+          <input type="hidden" name="email" value={email} />
+          <input type="hidden" name="type" value="password_reset" />
+          <input type="hidden" name="step" value="otp" />
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              Código OTP
+            </label>
+            <input 
+              type="text" 
+              name="code"
+              required
+              maxLength={6}
+              pattern="[0-9]{6}"
+              placeholder="000000"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center text-2xl tracking-widest font-mono"
+            />
+            <p class="mt-1 text-xs text-gray-500">
+              El código expirará en 15 minutos
+            </p>
+          </div>
+          
+          <button 
+            type="submit"
+            class="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+          >
+            Verificar Código
+          </button>
+          
+          {requestsRemaining < 3 && requestsRemaining > 0 && (
+            <div class="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <p class="text-sm text-amber-800">
+                ℹ️ Solicitudes restantes: {requestsRemaining}/3
+              </p>
+            </div>
+          )}
+          
+          {requestsRemaining === 0 && (
+            <div class="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <p class="text-sm text-red-800">
+                ❌ Límite de solicitudes alcanzado. Intenta más tarde.
+              </p>
+            </div>
+          )}
+        </form>
+          
+        <form method="post" action="/reset-password" class="mt-4">
+          <input type="hidden" name="email" value={email} />
+          <input type="hidden" name="step" value="email" />
+          <input type="hidden" name="resend" value="true" />
+          <button 
+            type="submit"
+            id="resend-btn"
+            disabled={nextRequestIn > 0}
+            class="w-full py-2 px-4 text-blue-600 font-medium hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-colors disabled:text-gray-400 disabled:cursor-not-allowed disabled:bg-gray-50"
+          >
+            <span id="resend-text">🔄 Solicitar nuevo código</span>
+            <span id="countdown" style={nextRequestIn > 0 ? '' : 'display:none'}>
+              ({nextRequestIn}s)
+            </span>
+          </button>
+        </form>
+
+        <script dangerouslySetInnerHTML={{__html: `
+          (function() {
+            let timeLeft = ${nextRequestIn};
+            const btn = document.getElementById('resend-btn');
+            const countdown = document.getElementById('countdown');
+            
+            if (!btn || !countdown) {
+              console.error('Countdown elements not found');
+              return;
+            }
+            
+            function updateCountdown() {
+              if (timeLeft > 0) {
+                countdown.textContent = '(' + timeLeft + 's)';
+                countdown.style.display = 'inline';
+                timeLeft--;
+                setTimeout(updateCountdown, 1000);
+              } else {
+                countdown.style.display = 'none';
+                btn.removeAttribute('disabled');
+              }
+            }
+            
+            if (timeLeft > 0) {
+              updateCountdown();
+            }
+          })();
+        `}} />
+        </>
+      )}
+      
+      {!success && step === 'form' && (
+        /* Paso 3: Nueva contraseña */
+        <form method="post" action="/reset-password" class="space-y-6">
+          <input type="hidden" name="email" value={email} />
+          <input type="hidden" name="step" value="complete" />
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              Nueva contraseña
+            </label>
+            <input 
+              type="password" 
+              name="password"
+              required
+              minLength={8}
+              placeholder="Mínimo 8 caracteres"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              Confirmar contraseña
+            </label>
+            <input 
+              type="password" 
+              name="password_confirm"
+              required
+              minLength={8}
+              placeholder="Repite la contraseña"
+              class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+          
+          <button 
+            type="submit"
+            class="w-full py-3 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors"
+          >
+            Actualizar Contraseña
+          </button>
+        </form>
+      )}
+      
+      <div class="mt-6 text-center">
+        <p class="text-sm text-gray-600">
+          ¿Recuerdas tu contraseña?{' '}
           <a href="/login" class="text-blue-600 hover:text-blue-700 font-medium">
             Inicia sesión
           </a>

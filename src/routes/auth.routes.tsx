@@ -7,7 +7,7 @@
 import { Hono } from 'hono';
 import type { AppEnv, SessionUser, User } from '../types';
 import { Layout, MinimalLayout } from '../views/Layout';
-import { SetupPage, LoginPage, RegisterPage } from '../views/pages';
+import { SetupPage, LoginPage, RegisterPage, ResetPasswordPage } from '../views/pages';
 import { 
   requireAuth,
   setSessionCookie, 
@@ -22,9 +22,18 @@ import {
 } from '../middleware/setup';
 import {
   sendEmail,
+  sendEmailWithTemplate,
   getEmailConfig,
   welcomeEmailTemplate
 } from '../services/email.service';
+import {
+  getSystemConfig,
+  getZeptoMailTemplates
+} from '../services/config.service';
+import {
+  createOTP,
+  validateOTP
+} from '../services/otp.service';
 
 const authRoutes = new Hono<AppEnv>();
 
@@ -275,6 +284,250 @@ authRoutes.post('/login', async (c) => {
 });
 
 /**
+ * GET /reset-password - Formulario para restablecer contraseña
+ */
+authRoutes.get('/reset-password', (c) => {
+  const user = c.get('user');
+  if (user) {
+    return c.redirect('/dashboard');
+  }
+  
+  return c.html(
+    <MinimalLayout title="Restablecer Contraseña">
+      <ResetPasswordPage />
+    </MinimalLayout>
+  );
+});
+
+/**
+ * POST /reset-password - Procesar restablecimiento de contraseña con OTP
+ */
+authRoutes.post('/reset-password', async (c) => {
+  try {
+    const formData = await c.req.formData();
+    const email = (formData.get('email') as string || '').toLowerCase().trim();
+    const step = (formData.get('step') as string) || 'email';
+    const tempToken = (formData.get('temp_token') as string) || '';
+    
+    // Validar OTP está habilitado
+    const config = await getSystemConfig(c.env.DB);
+    if (!config.otpEnabled) {
+      return c.html(
+        <MinimalLayout title="Error">
+          <ResetPasswordPage error="OTP no está habilitado en el sistema" />
+        </MinimalLayout>
+      );
+    }
+    
+    // ===== PASO 1: Solicitar OTP =====
+    if (step === 'email' && email) {
+      // Verificar que el email existe
+      const user = await c.env.DB
+        .prepare('SELECT id FROM users WHERE email = ?')
+        .bind(email)
+        .first<{ id: number }>();
+      
+      if (!user) {
+        // Por seguridad, responder como si existiera
+        return c.html(
+          <MinimalLayout title="Código Enviado">
+            <ResetPasswordPage 
+              step="otp"
+              email={email}
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      // Crear OTP
+      const otpResult = await createOTP(c.env.OTP_STORE, email, 'password_reset', {
+        length: 6,
+        ttlSeconds: 900
+      });
+      
+      if (!otpResult.success) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <ResetPasswordPage 
+              step="otp"
+              email={email}
+              error={otpResult.error}
+              nextRequestIn={otpResult.nextRequestIn || 0}
+              requestsRemaining={otpResult.requestsRemaining}
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      // Enviar OTP por correo
+      const emailConfig = getEmailConfig(c.env);
+      const templates = await getZeptoMailTemplates(c.env.DB);
+      
+      if (templates.otp) {
+        const appName = c.env.APP_NAME || 'ActionQ';
+        
+        try {
+          const emailResult = await sendEmailWithTemplate(emailConfig, {
+            to: [{ email, name: email }],
+            templateKey: templates.otp,
+            mergeInfo: {
+              otp_code: otpResult.code,
+              otp_expires_minutes: '15',
+              app_name: appName,
+              otp_title: 'Restablecimiento de Contraseña',
+              otp_message: 'Usa este código para restablecer tu contraseña'
+            }
+          });
+          
+          console.log('[Email] Password reset OTP sent:', emailResult);
+        } catch (err) {
+          console.error('[Email] Error sending password reset OTP:', err);
+        }
+      }
+      
+      const isResend = formData.get('resend') === 'true';
+      
+      return c.html(
+        <MinimalLayout title="Código Enviado">
+          <ResetPasswordPage 
+            step="otp"
+            email={email}
+            otpResent={isResend}
+            requestsRemaining={otpResult.requestsRemaining}
+            nextRequestIn={otpResult.nextRequestIn}
+          />
+        </MinimalLayout>
+      );
+    }
+    
+    // ===== PASO 2: Verificar OTP =====
+    if (step === 'otp' && email) {
+      const code = (formData.get('code') as string || '').trim();
+      
+      if (!code) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <ResetPasswordPage 
+              step="otp"
+              email={email}
+              error="Código requerido"
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      const result = await validateOTP(c.env.OTP_STORE, email, code, 'password_reset', {
+        length: 6,
+        ttlSeconds: 900,
+        maxAttempts: 3
+      });
+      
+      if (!result.success) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <ResetPasswordPage 
+              step="otp"
+              email={email}
+              error={result.error}
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      // Crear token temporal
+      const token = crypto.randomUUID();
+      await c.env.OTP_STORE.put(
+        `reset_token:${token}`,
+        JSON.stringify({ email, verifiedAt: new Date().toISOString() }),
+        { expirationTtl: 600 }
+      );
+      
+      return c.html(
+        <MinimalLayout title="Actualizar Contraseña">
+          <ResetPasswordPage 
+            step="form"
+            email={email}
+          />
+        </MinimalLayout>
+      );
+    }
+    
+    // ===== PASO 3: Actualizar contraseña =====
+    if (step === 'complete' && email) {
+      const password = formData.get('password') as string;
+      const passwordConfirm = formData.get('password_confirm') as string;
+      
+      // Validar contraseñas
+      if (!password || password.length < 8) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <ResetPasswordPage 
+              step="form"
+              email={email}
+              error="La contraseña debe tener al menos 8 caracteres"
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      if (password !== passwordConfirm) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <ResetPasswordPage 
+              step="form"
+              email={email}
+              error="Las contraseñas no coinciden"
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      // Actualizar contraseña
+      const salt = generateSalt();
+      const hash = await hashPassword(password, salt);
+      const storedHash = `${salt}:${hash}`;
+      
+      try {
+        await c.env.DB
+          .prepare('UPDATE users SET password_hash = ?, updated_at = datetime("now") WHERE email = ?')
+          .bind(storedHash, email)
+          .run();
+        
+        return c.html(
+          <MinimalLayout title="Éxito">
+            <ResetPasswordPage success={true} />
+          </MinimalLayout>
+        );
+      } catch (err) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <ResetPasswordPage 
+              step="form"
+              email={email}
+              error="Error al actualizar la contraseña"
+            />
+          </MinimalLayout>
+        );
+      }
+    }
+    
+    return c.html(
+      <MinimalLayout title="Error">
+        <ResetPasswordPage error="Paso inválido" />
+      </MinimalLayout>
+    );
+    
+  } catch (error) {
+    console.error('Reset password error:', error);
+    return c.html(
+      <MinimalLayout title="Error">
+        <ResetPasswordPage error="Error al procesar solicitud" />
+      </MinimalLayout>
+    );
+  }
+});
+
+/**
  * GET /register - Formulario de registro público
  */
 authRoutes.get('/register', (c) => {
@@ -291,128 +544,347 @@ authRoutes.get('/register', (c) => {
 });
 
 /**
- * POST /register - Procesar registro público
- * Cada dominio de email = una organización independiente
- * Si la organización no existe, se crea automáticamente
+ * POST /register - Procesar registro público con OTP
+ * Paso 1: Email -> solicitar OTP
+ * Paso 2: OTP -> verificar código
+ * Paso 3: Datos -> crear cuenta
  */
 authRoutes.post('/register', async (c) => {
   try {
     const formData = await c.req.formData();
-    const name = formData.get('name') as string;
-    const email = formData.get('email') as string;
-    const password = formData.get('password') as string;
-    const passwordConfirm = formData.get('password_confirm') as string;
+    const email = (formData.get('email') as string || '').toLowerCase().trim();
+    const step = (formData.get('step') as string) || 'email';
     
-    // Validaciones básicas
-    if (!name || !email || !password || !passwordConfirm) {
+    // Validar OTP está habilitado
+    const config = await getSystemConfig(c.env.DB);
+    if (!config.otpEnabled) {
       return c.html(
         <MinimalLayout title="Error">
-          <RegisterPage error="Todos los campos son requeridos" />
+          <RegisterPage error="OTP no está habilitado en el sistema" />
         </MinimalLayout>
       );
     }
     
-    if (password !== passwordConfirm) {
+    // ===== PASO 1: Solicitar OTP =====
+    if (step === 'email' && email) {
+      // Validar email
+      if (!email.includes('@')) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage error="Email inválido" />
+          </MinimalLayout>
+        );
+      }
+      
+      // Verificar que el email no existe
+      const existingUser = await c.env.DB
+        .prepare('SELECT id FROM users WHERE email = ?')
+        .bind(email)
+        .first();
+      
+      if (existingUser) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage error="Este email ya está registrado" />
+          </MinimalLayout>
+        );
+      }
+      
+      // Extraer dominio del email
+      const emailDomain = email.split('@')[1]?.toLowerCase();
+      if (!emailDomain) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage error="Email inválido" />
+          </MinimalLayout>
+        );
+      }
+      
+      // Verificar que existe una organización para este dominio
+      const allTenants = await c.env.DB
+        .prepare('SELECT id, name, allowed_domains FROM tenants WHERE is_active = 1')
+        .all<{ id: number; name: string; allowed_domains: string }>();
+      
+      let tenantExists = false;
+      for (const t of allTenants.results || []) {
+        const domains: string[] = JSON.parse(t.allowed_domains || '[]');
+        if (domains.includes(emailDomain)) {
+          tenantExists = true;
+          break;
+        }
+      }
+      
+      if (!tenantExists) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage error={`No existe una organización registrada para el dominio "${emailDomain}".`} />
+          </MinimalLayout>
+        );
+      }
+      
+      // Crear OTP
+      const otpResult = await createOTP(c.env.OTP_STORE, email, 'registration', {
+        length: 6,
+        ttlSeconds: 900
+      });
+      
+      if (!otpResult.success) {
+        console.error('[OTP] Error creating OTP for registration:', otpResult.error);
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage 
+              step="otp"
+              email={email}
+              error={otpResult.error}
+              nextRequestIn={otpResult.nextRequestIn || 0}
+              requestsRemaining={otpResult.requestsRemaining}
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      console.log('[OTP] Created OTP for registration:', email, 'Code:', otpResult.code);
+      
+      // Enviar OTP por correo
+      const emailConfig = getEmailConfig(c.env);
+      const templates = await getZeptoMailTemplates(c.env.DB);
+      
+      console.log('[Email] Email config:', {
+        hasToken: !!emailConfig.apiToken,
+        tokenValid: emailConfig.apiToken !== 'not-configured',
+        fromEmail: emailConfig.fromEmail,
+        hasTemplate: !!templates.otp
+      });
+      
+      if (templates.otp) {
+        const appName = c.env.APP_NAME || 'ActionQ';
+        
+        try {
+          const emailResult = await sendEmailWithTemplate(emailConfig, {
+            to: [{ email, name: email }],
+            templateKey: templates.otp,
+            mergeInfo: {
+              otp_code: otpResult.code,
+              otp_expires_minutes: '15',
+              app_name: appName,
+              otp_title: 'Verificación de Registro',
+              otp_message: 'Usa este código para completar tu registro en ActionQ'
+            }
+          });
+          
+          console.log('[Email] Email send result:', emailResult);
+          
+          if (!emailResult.success) {
+            console.error('[Email] Failed to send OTP email:', emailResult.error);
+          }
+        } catch (err) {
+          console.error('[Email] Error sending OTP:', err);
+        }
+      } else {
+        console.error('[Email] No OTP template configured');
+      }
+      
+      // Detectar si es reenvío
+      const isResend = formData.get('resend') === 'true';
+      
       return c.html(
-        <MinimalLayout title="Error">
-          <RegisterPage error="Las contraseñas no coinciden" />
+        <MinimalLayout title="Código Enviado">
+          <RegisterPage 
+            step="otp"
+            email={email}
+            otpResent={isResend}
+            requestsRemaining={otpResult.requestsRemaining}
+            nextRequestIn={otpResult.nextRequestIn}
+          />
         </MinimalLayout>
       );
     }
     
-    if (password.length < 8) {
+    // ===== PASO 2: Verificar OTP =====
+    if (step === 'otp' && email) {
+      const code = (formData.get('code') as string || '').trim();
+      
+      if (!code) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage 
+              step="otp"
+              email={email}
+              error="Código requerido"
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      const result = await validateOTP(c.env.OTP_STORE, email, code, 'registration', {
+        length: 6,
+        ttlSeconds: 900,
+        maxAttempts: 3
+      });
+      
+      if (!result.success) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage 
+              step="otp"
+              email={email}
+              error={result.error}
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      // Crear token temporal
+      const token = crypto.randomUUID();
+      await c.env.OTP_STORE.put(
+        `register_token:${token}`,
+        JSON.stringify({ email, verifiedAt: new Date().toISOString() }),
+        { expirationTtl: 600 }
+      );
+      
       return c.html(
-        <MinimalLayout title="Error">
-          <RegisterPage error="La contraseña debe tener al menos 8 caracteres" />
+        <MinimalLayout title="Crear Cuenta">
+          <RegisterPage 
+            step="form"
+            email={email}
+          />
         </MinimalLayout>
       );
     }
     
-    // Extraer dominio del email
-    const emailDomain = email.split('@')[1]?.toLowerCase();
-    if (!emailDomain) {
-      return c.html(
-        <MinimalLayout title="Error">
-          <RegisterPage error="Email inválido" />
-        </MinimalLayout>
-      );
-    }
-    
-    // Verificar si el email ya existe
-    const existingUser = await c.env.DB
-      .prepare('SELECT id FROM users WHERE email = ?')
-      .bind(email.toLowerCase())
-      .first();
-    
-    if (existingUser) {
-      return c.html(
-        <MinimalLayout title="Error">
-          <RegisterPage error="No se pudo completar el registro. Verifica tus datos." />
-        </MinimalLayout>
-      );
-    }
-    
-    // Buscar organización existente basada en el dominio del email
-    // Buscar en allowed_domains de todas las organizaciones activas
-    let tenant: { id: number; name: string } | null = null;
-    
-    const allTenants = await c.env.DB
-      .prepare('SELECT id, name, allowed_domains FROM tenants WHERE is_active = 1')
-      .all<{ id: number; name: string; allowed_domains: string }>();
-    
-    for (const t of allTenants.results || []) {
-      const domains: string[] = JSON.parse(t.allowed_domains || '[]');
-      if (domains.includes(emailDomain)) {
-        tenant = { id: t.id, name: t.name };
-        break;
+    // ===== PASO 3: Crear cuenta =====
+    if (step === 'complete' && email) {
+      const name = (formData.get('name') as string || '').trim();
+      const password = formData.get('password') as string;
+      const passwordConfirm = formData.get('password_confirm') as string;
+      
+      // Validar todos los campos
+      if (!name || !password || !passwordConfirm) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage 
+              step="form"
+              email={email}
+              error="Todos los campos son requeridos"
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      if (password !== passwordConfirm) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage 
+              step="form"
+              email={email}
+              error="Las contraseñas no coinciden"
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      if (password.length < 8) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage 
+              step="form"
+              email={email}
+              error="La contraseña debe tener al menos 8 caracteres"
+            />
+          </MinimalLayout>
+        );
+      }
+      
+      // Extraer dominio del email
+      const emailDomain = email.split('@')[1]?.toLowerCase();
+      if (!emailDomain) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage error="Email inválido" />
+          </MinimalLayout>
+        );
+      }
+      
+      // Buscar la organización
+      const allTenants = await c.env.DB
+        .prepare('SELECT id, name, allowed_domains FROM tenants WHERE is_active = 1')
+        .all<{ id: number; name: string; allowed_domains: string }>();
+      
+      let tenant: { id: number; name: string } | null = null;
+      for (const t of allTenants.results || []) {
+        const domains: string[] = JSON.parse(t.allowed_domains || '[]');
+        if (domains.includes(emailDomain)) {
+          tenant = { id: t.id, name: t.name };
+          break;
+        }
+      }
+      
+      if (!tenant) {
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage error={`No existe una organización registrada para el dominio "${emailDomain}".`} />
+          </MinimalLayout>
+        );
+      }
+      
+      // Hashear contraseña
+      const salt = generateSalt();
+      const hash = await hashPassword(password, salt);
+      const storedHash = `${salt}:${hash}`;
+      
+      // Crear usuario con rol "user"
+      try {
+        const result = await c.env.DB
+          .prepare(`
+            INSERT INTO users (
+              tenant_id, email, name, password_hash, 
+              role, is_active, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, 'user', 1, datetime('now'), datetime('now'))
+          `)
+          .bind(tenant.id, email, name, storedHash)
+          .run();
+        
+        // Enviar email de bienvenida
+        const appName = c.env.APP_NAME || 'ActionQ';
+        const appUrl = c.env.APP_URL || `https://${c.req.header('host')}`;
+        const emailConfig = getEmailConfig(c.env);
+        const welcomeEmail = welcomeEmailTemplate(
+          name,
+          email,
+          tenant.name,
+          `${appUrl}/login`,
+          appName
+        );
+        
+        sendEmail(emailConfig, {
+          to: [{ email, name }],
+          subject: welcomeEmail.subject,
+          htmlBody: welcomeEmail.html
+        }).catch(err => console.error('Error enviando email de bienvenida:', err));
+        
+        return c.html(
+          <MinimalLayout title="Registro Exitoso">
+            <RegisterPage success={true} />
+          </MinimalLayout>
+        );
+      } catch (err) {
+        console.error('Registration error:', err);
+        return c.html(
+          <MinimalLayout title="Error">
+            <RegisterPage 
+              step="form"
+              email={email}
+              error="No se pudo crear la cuenta. Intenta de nuevo."
+            />
+          </MinimalLayout>
+        );
       }
     }
     
-    // Si no existe la organización, no permitir registro
-    if (!tenant) {
-      return c.html(
-        <MinimalLayout title="Error">
-          <RegisterPage error={`No existe una organización registrada para el dominio "${emailDomain}". Contacta al administrador.`} />
-        </MinimalLayout>
-      );
-    }
-    
-    // Todos los usuarios registrados son "user" por defecto
-    // Solo un admin existente puede promover usuarios a admin
-    const userRole = 'user';
-    
-    // Crear usuario
-    const salt = generateSalt();
-    const passwordHash = await hashPassword(password, salt);
-    const storedHash = `${salt}:${passwordHash}`;
-    
-    await c.env.DB
-      .prepare('INSERT INTO users (tenant_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)')
-      .bind(tenant.id, email.toLowerCase(), storedHash, name, userRole)
-      .run();
-    
-    // Enviar email de bienvenida
-    const appName = c.env.APP_NAME || 'ActionQ';
-    const appUrl = c.env.APP_URL || `https://${c.req.header('host')}`;
-    const emailConfig = getEmailConfig(c.env);
-    const welcomeEmail = welcomeEmailTemplate(
-      name,
-      email.toLowerCase(),
-      tenant.name,
-      `${appUrl}/login`,
-      appName
-    );
-    
-    // Enviar en background, no bloquear el registro si falla
-    sendEmail(emailConfig, {
-      to: [{ email: email.toLowerCase(), name }],
-      subject: welcomeEmail.subject,
-      htmlBody: welcomeEmail.html
-    }).catch(err => console.error('Error enviando email de bienvenida:', err));
-    
     return c.html(
-      <MinimalLayout title="Registro Exitoso">
-        <RegisterPage success={true} />
+      <MinimalLayout title="Error">
+        <RegisterPage error="Paso inválido" />
       </MinimalLayout>
     );
     
@@ -424,6 +896,22 @@ authRoutes.post('/register', async (c) => {
       </MinimalLayout>
     );
   }
+});
+
+/**
+ * GET /register - Formulario de registro público
+ */
+authRoutes.get('/register', (c) => {
+  const user = c.get('user');
+  if (user) {
+    return c.redirect('/dashboard');
+  }
+  
+  return c.html(
+    <MinimalLayout title="Crear Cuenta">
+      <RegisterPage />
+    </MinimalLayout>
+  );
 });
 
 /**
