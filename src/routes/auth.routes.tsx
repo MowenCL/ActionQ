@@ -20,6 +20,11 @@ import {
   onlyIfNotInstalledMiddleware,
   markSystemAsInstalled 
 } from '../middleware/setup';
+import {
+  sendEmail,
+  getEmailConfig,
+  welcomeEmailTemplate
+} from '../services/email.service';
 
 const authRoutes = new Hono<AppEnv>();
 
@@ -385,6 +390,25 @@ authRoutes.post('/register', async (c) => {
       .prepare('INSERT INTO users (tenant_id, email, password_hash, name, role) VALUES (?, ?, ?, ?, ?)')
       .bind(tenant.id, email.toLowerCase(), storedHash, name, userRole)
       .run();
+    
+    // Enviar email de bienvenida
+    const appName = c.env.APP_NAME || 'ActionQ';
+    const appUrl = c.env.APP_URL || `https://${c.req.header('host')}`;
+    const emailConfig = getEmailConfig(c.env);
+    const welcomeEmail = welcomeEmailTemplate(
+      name,
+      email.toLowerCase(),
+      tenant.name,
+      `${appUrl}/login`,
+      appName
+    );
+    
+    // Enviar en background, no bloquear el registro si falla
+    sendEmail(emailConfig, {
+      to: [{ email: email.toLowerCase(), name }],
+      subject: welcomeEmail.subject,
+      htmlBody: welcomeEmail.html
+    }).catch(err => console.error('Error enviando email de bienvenida:', err));
     
     return c.html(
       <MinimalLayout title="Registro Exitoso">

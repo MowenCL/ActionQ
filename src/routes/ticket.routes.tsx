@@ -28,6 +28,14 @@ import {
   logSecureKeyCreation
 } from '../services/secureKey.service';
 import { getSystemConfig, getAvailableAgent } from '../services/config.service';
+import {
+  sendEmail,
+  getEmailConfig,
+  newTicketEmailTemplate,
+  ticketAssignedEmailTemplate,
+  newMessageEmailTemplate,
+  ticketStatusChangeEmailTemplate
+} from '../services/email.service';
 
 const ticketRoutes = new Hono<AppEnv>();
 
@@ -711,7 +719,71 @@ ticketRoutes.post('/tickets', requireAuth, async (c) => {
       .bind(ticketTenantId, title, description, priority, ticketCreatedBy, ticketCreatedByAgent, assignedAgentId)
       .first<{ id: number }>();
     
-    return c.redirect(`/tickets/${result?.id}`);
+    const ticketId = result?.id;
+    
+    // Enviar notificaciones por email
+    if (ticketId) {
+      const appName = c.env.APP_NAME || 'ActionQ';
+      const appUrl = c.env.APP_URL || `https://${c.req.header('host')}`;
+      const emailConfig = getEmailConfig(c.env);
+      const ticketUrl = `${appUrl}/tickets/${ticketId}`;
+      
+      // Obtener info del creador y tenant
+      const creatorInfo = await c.env.DB
+        .prepare('SELECT u.name, t.name as tenant_name FROM users u JOIN tenants t ON u.tenant_id = t.id WHERE u.id = ?')
+        .bind(ticketCreatedBy)
+        .first<{ name: string; tenant_name: string }>();
+      
+      // Notificar a todos los agentes activos del nuevo ticket
+      const agents = await c.env.DB
+        .prepare(`SELECT email, name FROM users WHERE role IN ('super_admin', 'agent_admin', 'agent') AND is_active = 1`)
+        .all<{ email: string; name: string }>();
+      
+      if (agents.results && agents.results.length > 0) {
+        const newTicketEmail = newTicketEmailTemplate(
+          ticketId,
+          title,
+          description,
+          creatorInfo?.name || user.name,
+          creatorInfo?.tenant_name || 'Sin organización',
+          ticketUrl,
+          appName
+        );
+        
+        // Enviar a todos los agentes
+        sendEmail(emailConfig, {
+          to: agents.results.map(a => ({ email: a.email, name: a.name })),
+          subject: newTicketEmail.subject,
+          htmlBody: newTicketEmail.html
+        }).catch(err => console.error('Error enviando email de nuevo ticket:', err));
+      }
+      
+      // Si fue auto-asignado, notificar al agente específico
+      if (assignedAgentId) {
+        const assignedAgent = await c.env.DB
+          .prepare('SELECT email, name FROM users WHERE id = ?')
+          .bind(assignedAgentId)
+          .first<{ email: string; name: string }>();
+        
+        if (assignedAgent) {
+          const assignedEmail = ticketAssignedEmailTemplate(
+            ticketId,
+            title,
+            assignedAgent.name,
+            ticketUrl,
+            appName
+          );
+          
+          sendEmail(emailConfig, {
+            to: [{ email: assignedAgent.email, name: assignedAgent.name }],
+            subject: assignedEmail.subject,
+            htmlBody: assignedEmail.html
+          }).catch(err => console.error('Error enviando email de asignación:', err));
+        }
+      }
+    }
+    
+    return c.redirect(`/tickets/${ticketId}`);
     
   } catch (error) {
     console.error('Create ticket error:', error);
@@ -2109,6 +2181,71 @@ ticketRoutes.post('/tickets/:id/messages', requireAuth, async (c) => {
     // Obtener el ID del mensaje insertado
     const messageId = messageResult.meta?.last_row_id;
     
+    // Notificar por email si el mensaje es público
+    if (isInternal === 0) {
+      const appName = c.env.APP_NAME || 'ActionQ';
+      const appUrl = c.env.APP_URL || `https://${c.req.header('host')}`;
+      const emailConfig = getEmailConfig(c.env);
+      const ticketUrl = `${appUrl}/tickets/${ticketId}`;
+      
+      // Obtener título del ticket
+      const ticketInfo = await c.env.DB
+        .prepare('SELECT title FROM tickets WHERE id = ?')
+        .bind(ticketId)
+        .first<{ title: string }>();
+      
+      // Determinar a quién notificar
+      const recipientsToNotify: { email: string; name: string }[] = [];
+      
+      // Si quien envía es equipo interno, notificar al creador y participantes
+      if (isInternalTeam) {
+        // Notificar al creador
+        const creator = await c.env.DB
+          .prepare('SELECT email, name FROM users WHERE id = ? AND id != ?')
+          .bind(ticket.created_by, user.id)
+          .first<{ email: string; name: string }>();
+        if (creator) recipientsToNotify.push(creator);
+        
+        // Notificar a participantes
+        const participants = await c.env.DB
+          .prepare(`
+            SELECT u.email, u.name FROM users u 
+            JOIN ticket_participants tp ON u.id = tp.user_id 
+            WHERE tp.ticket_id = ? AND u.id != ?
+          `)
+          .bind(ticketId, user.id)
+          .all<{ email: string; name: string }>();
+        if (participants.results) recipientsToNotify.push(...participants.results);
+      } else {
+        // Si es cliente, notificar al agente asignado
+        if (ticket.assigned_to) {
+          const assignedAgent = await c.env.DB
+            .prepare('SELECT email, name FROM users WHERE id = ?')
+            .bind(ticket.assigned_to)
+            .first<{ email: string; name: string }>();
+          if (assignedAgent) recipientsToNotify.push(assignedAgent);
+        }
+      }
+      
+      // Enviar notificación
+      if (recipientsToNotify.length > 0 && ticketInfo) {
+        const messageEmail = newMessageEmailTemplate(
+          ticketId,
+          ticketInfo.title,
+          user.name,
+          content,
+          ticketUrl,
+          appName
+        );
+        
+        sendEmail(emailConfig, {
+          to: recipientsToNotify,
+          subject: messageEmail.subject,
+          htmlBody: messageEmail.html
+        }).catch(err => console.error('Error enviando email de nuevo mensaje:', err));
+      }
+    }
+    
     // Procesar clave segura si se envió
     const secureKeyValue = (formData.get('secure_key_value') as string)?.trim();
     const secureKeyConfirmed = formData.get('secure_key_confirmed') === '1';
@@ -2180,6 +2317,42 @@ ticketRoutes.post('/tickets/:id/messages', requireAuth, async (c) => {
           .prepare('INSERT INTO messages (ticket_id, user_id, content, is_internal) VALUES (?, ?, ?, 1)')
           .bind(ticketId, user.id, statusNote)
           .run();
+        
+        // Notificar cambio de estado por email
+        const appName = c.env.APP_NAME || 'ActionQ';
+        const appUrl = c.env.APP_URL || `https://${c.req.header('host')}`;
+        const emailConfig = getEmailConfig(c.env);
+        const ticketUrl = `${appUrl}/tickets/${ticketId}`;
+        
+        // Obtener título del ticket
+        const ticketTitle = await c.env.DB
+          .prepare('SELECT title FROM tickets WHERE id = ?')
+          .bind(ticketId)
+          .first<{ title: string }>();
+        
+        // Notificar al creador del ticket
+        const creator = await c.env.DB
+          .prepare('SELECT email, name FROM users WHERE id = ?')
+          .bind(ticket.created_by)
+          .first<{ email: string; name: string }>();
+        
+        if (creator && ticketTitle) {
+          const statusChangeEmail = ticketStatusChangeEmailTemplate(
+            ticketId,
+            ticketTitle.title,
+            statusLabels[ticket.status] || ticket.status,
+            statusLabels[newStatus] || newStatus,
+            user.name,
+            ticketUrl,
+            appName
+          );
+          
+          sendEmail(emailConfig, {
+            to: [{ email: creator.email, name: creator.name }],
+            subject: statusChangeEmail.subject,
+            htmlBody: statusChangeEmail.html
+          }).catch(err => console.error('Error enviando email de cambio de estado:', err));
+        }
       }
     }
     

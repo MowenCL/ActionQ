@@ -51,6 +51,39 @@ database_id = "YOUR-D1-DATABASE-ID"
 [vars]
 APP_NAME = "ActionQ"
 APP_VERSION = "1.0.0"
+# URL base de la aplicación (para enlaces en emails)
+# APP_URL = "https://tu-app.workers.dev"
+
+# ================================================
+# SECRETOS DE AUTENTICACIÓN
+# ================================================
+#
+# Configura estos secretos usando:
+#   npx wrangler secret put APP_SECRET
+#   npx wrangler secret put ADMIN_INIT_EMAIL
+#   npx wrangler secret put ADMIN_INIT_PASSWORD
+#
+# APP_SECRET: Clave para firmar cookies (mínimo 32 caracteres)
+# ADMIN_INIT_EMAIL: Email del primer administrador
+# ADMIN_INIT_PASSWORD: Contraseña temporal del admin
+
+# ================================================
+# SECRETOS DE ZEPTOMAIL (Emails transaccionales)
+# ================================================
+#
+# Para habilitar el envío de correos, configura:
+#   npx wrangler secret put ZEPTOMAIL_TOKEN
+#   npx wrangler secret put ZEPTOMAIL_FROM_EMAIL
+#   npx wrangler secret put ZEPTOMAIL_FROM_NAME
+#
+# ZEPTOMAIL_TOKEN: Tu API token de ZeptoMail
+# ZEPTOMAIL_FROM_EMAIL: Email remitente (ej: noreply@tudominio.com)
+# ZEPTOMAIL_FROM_NAME: Nombre del remitente (ej: "ActionQ Support")
+#
+# Para obtener credenciales:
+# 1. Crea una cuenta en https://www.zoho.com/zeptomail/
+# 2. Verifica tu dominio remitente
+# 3. Genera un token en la sección "Email Sending > Technical details"
 
 # ================================================
 # CONFIGURACIÓN DE DESARROLLO LOCAL
