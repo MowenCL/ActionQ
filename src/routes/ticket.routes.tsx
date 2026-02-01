@@ -1439,22 +1439,21 @@ ticketRoutes.get('/tickets/:id', requireAuth, async (c) => {
                             }
                           `}
                         >
-                          <option value="">Sin cambio</option>
-                          {ticket.status !== 'open' && (
-                            <option value="open">📬 Abierto</option>
-                          )}
-                          {ticket.status !== 'in_progress' && (
-                            <option value="in_progress">⏳ En Progreso</option>
-                          )}
-                          {ticket.status !== 'pending' && (
-                            <option value="pending">⏸️ Validando</option>
-                          )}
-                          {ticket.status !== 'resolved' && (
-                            <option value="resolved">✅ Resuelto</option>
-                          )}
-                          {ticket.status !== 'closed' && (
-                            <option value="closed">🔒 Cerrado</option>
-                          )}
+                          <option value="open" selected={ticket.status === 'open'}>
+                            📬 Abierto {ticket.status === 'open' ? '(Actual)' : ''}
+                          </option>
+                          <option value="in_progress" selected={ticket.status === 'in_progress'}>
+                            ⏳ En Progreso {ticket.status === 'in_progress' ? '(Actual)' : ''}
+                          </option>
+                          <option value="pending" selected={ticket.status === 'pending'}>
+                            ⏸️ Validando {ticket.status === 'pending' ? '(Actual)' : ''}
+                          </option>
+                          <option value="resolved" selected={ticket.status === 'resolved'}>
+                            ✅ Resuelto {ticket.status === 'resolved' ? '(Actual)' : ''}
+                          </option>
+                          <option value="closed" selected={ticket.status === 'closed'}>
+                            🔒 Cerrado {ticket.status === 'closed' ? '(Actual)' : ''}
+                          </option>
                         </select>
                       </div>
                     )}
