@@ -33,102 +33,21 @@ import {
   markSystemAsInstalled 
 } from './middleware/setup';
 
+// Utilidades y constantes extraídas
+import { formatDate, encryptValue, decryptValue } from './utils';
+import { 
+  TICKET_STATUS_LABELS, 
+  TICKET_STATUS_COLORS, 
+  PRIORITY_ORDER_SQL,
+  TIMEZONES,
+  SESSION_TIMEOUT_OPTIONS 
+} from './config/constants';
+
 // ================================================
 // CREAR APP HONO
 // ================================================
 
 const app = new Hono<AppEnv>();
-
-// ================================================
-// FUNCIÓN HELPER PARA FORMATEAR FECHAS
-// ================================================
-
-/**
- * Formatea una fecha con la zona horaria especificada
- */
-function formatDate(dateStr: string, timezone: string, options?: { dateOnly?: boolean }): string {
-  try {
-    const date = new Date(dateStr);
-    if (options?.dateOnly) {
-      return date.toLocaleDateString('es-ES', { timeZone: timezone });
-    }
-    return date.toLocaleString('es-ES', { timeZone: timezone });
-  } catch {
-    return dateStr;
-  }
-}
-
-// ================================================
-// FUNCIONES DE ENCRIPTACIÓN (AES-GCM)
-// ================================================
-
-/**
- * Deriva una clave AES-256 desde APP_SECRET usando PBKDF2
- */
-async function deriveKey(secret: string): Promise<CryptoKey> {
-  const encoder = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(secret),
-    'PBKDF2',
-    false,
-    ['deriveKey']
-  );
-  
-  return crypto.subtle.deriveKey(
-    {
-      name: 'PBKDF2',
-      salt: encoder.encode('ActionQ-SecureKeys-v1'),
-      iterations: 100000,
-      hash: 'SHA-256'
-    },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
-}
-
-/**
- * Encripta un valor usando AES-GCM
- * Retorna { encrypted: base64, iv: base64 }
- */
-async function encryptValue(value: string, secret: string): Promise<{ encrypted: string; iv: string }> {
-  const key = await deriveKey(secret);
-  const encoder = new TextEncoder();
-  const iv = crypto.getRandomValues(new Uint8Array(12)); // 96-bit IV para AES-GCM
-  
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    encoder.encode(value)
-  );
-  
-  // Convertir a base64
-  const encryptedBase64 = btoa(String.fromCharCode(...new Uint8Array(encrypted)));
-  const ivBase64 = btoa(String.fromCharCode(...iv));
-  
-  return { encrypted: encryptedBase64, iv: ivBase64 };
-}
-
-/**
- * Desencripta un valor usando AES-GCM
- */
-async function decryptValue(encryptedBase64: string, ivBase64: string, secret: string): Promise<string> {
-  const key = await deriveKey(secret);
-  
-  // Convertir de base64
-  const encrypted = Uint8Array.from(atob(encryptedBase64), c => c.charCodeAt(0));
-  const iv = Uint8Array.from(atob(ivBase64), c => c.charCodeAt(0));
-  
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    encrypted
-  );
-  
-  return new TextDecoder().decode(decrypted);
-}
 
 // ================================================
 // MIDDLEWARE GLOBAL
@@ -668,17 +587,6 @@ app.get('/tickets', requireAuth, async (c) => {
   const user = c.get('user')!;
   const db = c.env.DB;
   
-  // Orden de prioridad: urgent > high > medium > low
-  const priorityOrder = `
-    CASE t.priority 
-      WHEN 'urgent' THEN 1 
-      WHEN 'high' THEN 2 
-      WHEN 'medium' THEN 3 
-      WHEN 'low' THEN 4 
-      ELSE 5 
-    END
-  `;
-  
   // Filtro según rol - incluir nombre de usuario y organización
   let query: string;
   let result;
@@ -697,7 +605,7 @@ app.get('/tickets', requireAuth, async (c) => {
       LEFT JOIN tenants ten ON t.tenant_id = ten.id 
       LEFT JOIN users agent ON t.assigned_to = agent.id 
       WHERE t.status NOT IN ('closed', 'resolved')
-      ORDER BY ${priorityOrder}, t.created_at DESC
+      ORDER BY ${PRIORITY_ORDER_SQL}, t.created_at DESC
     `;
     result = await db.prepare(query).all<Ticket & { user_name: string; tenant_name: string; agent_name: string | null }>();
   } else if (user.role === 'org_admin') {
@@ -709,7 +617,7 @@ app.get('/tickets', requireAuth, async (c) => {
       LEFT JOIN tenants ten ON t.tenant_id = ten.id 
       LEFT JOIN users agent ON t.assigned_to = agent.id 
       WHERE t.tenant_id = ? AND t.status NOT IN ('closed', 'resolved')
-      ORDER BY ${priorityOrder}, t.created_at DESC
+      ORDER BY ${PRIORITY_ORDER_SQL}, t.created_at DESC
     `;
     result = await db.prepare(query).bind(user.tenant_id).all<Ticket & { user_name: string; tenant_name: string; agent_name: string | null }>();
   } else {
@@ -721,7 +629,7 @@ app.get('/tickets', requireAuth, async (c) => {
       LEFT JOIN users agent ON t.assigned_to = agent.id 
       LEFT JOIN ticket_participants tp ON t.id = tp.ticket_id
       WHERE (t.created_by = ? OR tp.user_id = ?) AND t.status NOT IN ('closed', 'resolved')
-      ORDER BY ${priorityOrder}, t.created_at DESC
+      ORDER BY ${PRIORITY_ORDER_SQL}, t.created_at DESC
     `;
     result = await db.prepare(query).bind(user.id, user.id).all<Ticket & { tenant_name: string; agent_name: string | null }>();
   }
@@ -1350,23 +1258,6 @@ app.post('/tickets', requireAuth, async (c) => {
   }
 });
 
-// Helper para estados de tickets
-const ticketStatusLabels: Record<string, string> = {
-  'open': 'Abierto',
-  'in_progress': 'En Progreso',
-  'pending': 'Validando',
-  'resolved': 'Resuelto',
-  'closed': 'Cerrado'
-};
-
-const ticketStatusColors: Record<string, string> = {
-  'open': 'bg-blue-100 text-blue-800',
-  'in_progress': 'bg-yellow-100 text-yellow-800',
-  'pending': 'bg-purple-100 text-purple-800',
-  'resolved': 'bg-green-100 text-green-800',
-  'closed': 'bg-gray-100 text-gray-800'
-};
-
 /**
  * GET /tickets/:id - Ver detalle de ticket
  */
@@ -1546,8 +1437,8 @@ app.get('/tickets/:id', requireAuth, async (c) => {
               <h1 class="text-2xl font-bold text-gray-900 mt-1">{ticket.title}</h1>
             </div>
             <div class="flex items-center space-x-2">
-              <span class={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${ticketStatusColors[ticket.status] || 'bg-gray-100 text-gray-800'}`}>
-                {ticketStatusLabels[ticket.status] || ticket.status}
+              <span class={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${TICKET_STATUS_COLORS[ticket.status] || 'bg-gray-100 text-gray-800'}`}>
+                {TICKET_STATUS_LABELS[ticket.status] || ticket.status}
               </span>
               <span class={`inline-flex items-center px-3 py-1 rounded-full text-sm font-medium ${
                 ticket.priority === 'urgent' ? 'bg-red-100 text-red-600' :
@@ -2377,7 +2268,7 @@ app.post('/tickets/:id/status', requireAuth, async (c) => {
       .run();
     
     // Añadir mensaje con el cambio de estado
-    const statusLabel = ticketStatusLabels[newStatus] || newStatus;
+    const statusLabel = TICKET_STATUS_LABELS[newStatus] || newStatus;
     await c.env.DB
       .prepare('INSERT INTO messages (ticket_id, user_id, content, is_internal) VALUES (?, ?, ?, 0)')
       .bind(ticketId, user.id, `📌 Estado cambiado a "${statusLabel}"\n\n${message}`)
@@ -4247,34 +4138,6 @@ app.get('/admin/settings', requireAdmin, async (c) => {
   const currentTimezone = configMap.get('timezone') || 'UTC';
   const sessionTimeoutMinutes = parseInt(configMap.get('session_timeout_minutes') || '5', 10);
   
-  // Lista de zonas horarias comunes
-  const timezones = [
-    { value: 'UTC', label: 'UTC (Tiempo Universal Coordinado)' },
-    { value: 'America/New_York', label: 'América/Nueva York (EST/EDT)' },
-    { value: 'America/Chicago', label: 'América/Chicago (CST/CDT)' },
-    { value: 'America/Denver', label: 'América/Denver (MST/MDT)' },
-    { value: 'America/Los_Angeles', label: 'América/Los Ángeles (PST/PDT)' },
-    { value: 'America/Mexico_City', label: 'América/Ciudad de México (CST)' },
-    { value: 'America/Bogota', label: 'América/Bogotá (COT)' },
-    { value: 'America/Lima', label: 'América/Lima (PET)' },
-    { value: 'America/Santiago', label: 'América/Santiago (CLT/CLST)' },
-    { value: 'America/Buenos_Aires', label: 'América/Buenos Aires (ART)' },
-    { value: 'America/Sao_Paulo', label: 'América/São Paulo (BRT/BRST)' },
-    { value: 'America/Caracas', label: 'América/Caracas (VET)' },
-    { value: 'Europe/London', label: 'Europa/Londres (GMT/BST)' },
-    { value: 'Europe/Madrid', label: 'Europa/Madrid (CET/CEST)' },
-    { value: 'Europe/Paris', label: 'Europa/París (CET/CEST)' },
-    { value: 'Europe/Berlin', label: 'Europa/Berlín (CET/CEST)' },
-    { value: 'Europe/Rome', label: 'Europa/Roma (CET/CEST)' },
-    { value: 'Asia/Tokyo', label: 'Asia/Tokio (JST)' },
-    { value: 'Asia/Shanghai', label: 'Asia/Shanghái (CST)' },
-    { value: 'Asia/Seoul', label: 'Asia/Seúl (KST)' },
-    { value: 'Asia/Singapore', label: 'Asia/Singapur (SGT)' },
-    { value: 'Asia/Dubai', label: 'Asia/Dubái (GST)' },
-    { value: 'Australia/Sydney', label: 'Australia/Sídney (AEST/AEDT)' },
-    { value: 'Pacific/Auckland', label: 'Pacífico/Auckland (NZST/NZDT)' },
-  ];
-  
   // Obtener hora actual en la zona horaria configurada
   const now = new Date();
   let currentTimeInTz = '';
@@ -4313,7 +4176,7 @@ app.get('/admin/settings', requireAdmin, async (c) => {
                   name="timezone" 
                   class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
-                  {timezones.map((tz) => (
+                  {TIMEZONES.map((tz) => (
                     <option 
                       key={tz.value} 
                       value={tz.value} 
@@ -4359,14 +4222,15 @@ app.get('/admin/settings', requireAdmin, async (c) => {
                   name="session_timeout_minutes" 
                   class="w-full max-w-md px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                 >
-                  <option value="1" selected={sessionTimeoutMinutes === 1}>1 minuto (pruebas)</option>
-                  <option value="5" selected={sessionTimeoutMinutes === 5}>5 minutos</option>
-                  <option value="10" selected={sessionTimeoutMinutes === 10}>10 minutos</option>
-                  <option value="15" selected={sessionTimeoutMinutes === 15}>15 minutos</option>
-                  <option value="30" selected={sessionTimeoutMinutes === 30}>30 minutos</option>
-                  <option value="60" selected={sessionTimeoutMinutes === 60}>1 hora</option>
-                  <option value="120" selected={sessionTimeoutMinutes === 120}>2 horas</option>
-                  <option value="480" selected={sessionTimeoutMinutes === 480}>8 horas</option>
+                  {SESSION_TIMEOUT_OPTIONS.map((opt) => (
+                    <option 
+                      key={opt.value} 
+                      value={opt.value} 
+                      selected={sessionTimeoutMinutes === opt.value}
+                    >
+                      {opt.label}
+                    </option>
+                  ))}
                 </select>
               </div>
               
