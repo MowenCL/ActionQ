@@ -43,11 +43,25 @@ ActionQ/
 ├── src/
 │   ├── index.tsx              # 🚀 Entrada principal (Hono app)
 │   ├── types.ts               # 📝 Definiciones TypeScript
+│   ├── utils/
+│   │   └── index.ts           # 🔧 Utilidades (formatDate, etc.)
+│   ├── config/
+│   │   └── constants.ts       # ⚡ Constantes (estados, colores, timezones)
 │   ├── db/
 │   │   └── schema.sql         # 💾 Esquema de base de datos
 │   ├── middleware/
-│   │   ├── auth.ts            # 🔐 Autenticación y sesiones
+│   │   ├── auth.ts            # 🔐 Autenticación, sesiones y roles
 │   │   └── setup.ts           # ⚙️ Detección de primera instalación
+│   ├── services/
+│   │   ├── config.service.ts  # ⚙️ Configuración del sistema
+│   │   ├── secureKey.service.ts # 🔑 Claves seguras (AES-256-GCM)
+│   │   ├── tenant.service.ts  # 🏢 Gestión de organizaciones
+│   │   └── user.service.ts    # 👤 Gestión de usuarios
+│   ├── routes/
+│   │   ├── index.ts           # 📦 Barrel exports de rutas
+│   │   ├── auth.routes.tsx    # 🔐 Login, registro, setup (~420 líneas)
+│   │   ├── admin.routes.tsx   # 👑 Panel admin, usuarios, config (~1,600 líneas)
+│   │   └── ticket.routes.tsx  # 🎫 CRUD tickets, mensajes (~2,200 líneas)
 │   └── views/
 │       ├── Layout.tsx         # 🎨 Layout principal (Tailwind/HTMX)
 │       └── pages.tsx          # 📄 Componentes de páginas
@@ -58,6 +72,19 @@ ActionQ/
 ├── tsconfig.json              # ⚡ Configuración TypeScript
 └── README.md                  # 📖 Esta documentación
 ```
+
+### Arquitectura Modular
+
+El proyecto sigue una arquitectura modular para mejor mantenibilidad:
+
+| Capa | Descripción |
+|------|-------------|
+| **Routes** | Handlers HTTP organizados por dominio (auth, admin, tickets) |
+| **Services** | Lógica de negocio reutilizable (usuarios, tenants, config) |
+| **Middleware** | Autenticación, autorización y verificaciones |
+| **Views** | Componentes JSX para renderizado SSR |
+| **Config** | Constantes y configuración centralizada |
+| **Utils** | Funciones auxiliares compartidas |
 
 ---
 
