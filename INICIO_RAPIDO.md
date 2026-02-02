@@ -41,3 +41,5 @@ npx wrangler secret put APP_SECRET
 npx wrangler secret put ZEPTOMAIL_TOKEN         #Ej. Zoho-enczapikey wSsV....
 npx wrangler secret put ZEPTOMAIL_FROM_EMAIL    #Ej. noreply@mowen.cl
 npx wrangler secret put ZEPTOMAIL_FROM_NAME     #Ej. Gestor de Tickets - Mowen
+
+# Ahora ingresa a la aplicacion
