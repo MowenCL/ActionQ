@@ -124,7 +124,7 @@ cp wrangler.toml.example wrangler.toml
 ### Paso 4: Crear la Base de Datos D1
 
 ```bash
-npx wrangler d1 create actionq-db
+npx wrangler d1 create actionq_db
 ```
 
 Esto te dará un output como:
@@ -132,7 +132,7 @@ Esto te dará un output como:
 ```toml
 [[d1_databases]]
 binding = "DB"
-database_name = "actionq-db"
+database_name = "actionq_db"
 database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 

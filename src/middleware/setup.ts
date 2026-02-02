@@ -14,7 +14,7 @@ import type { AppEnv } from '../types';
 /**
  * Verifica si el sistema ya fue configurado.
  */
-export async function isSystemInstalled(db: D1Database): Promise<boolean> {
+export async function isSystemInstalled(db: any): Promise<boolean> {
   try {
     const result = await db
       .prepare("SELECT value FROM system_config WHERE key = 'setup_completed'")
@@ -30,7 +30,7 @@ export async function isSystemInstalled(db: D1Database): Promise<boolean> {
 /**
  * Marca el sistema como instalado.
  */
-export async function markSystemAsInstalled(db: D1Database): Promise<void> {
+export async function markSystemAsInstalled(db: any): Promise<void> {
   await db
     .prepare("INSERT OR REPLACE INTO system_config (key, value) VALUES ('setup_completed', '1')")
     .run();

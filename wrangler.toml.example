@@ -4,7 +4,7 @@
 # 
 # INSTRUCCIONES:
 # 1. Copia este archivo: cp wrangler.toml.example wrangler.toml
-# 2. Crea tu base de datos D1: npx wrangler d1 create actionq-db
+# 2. Crea tu base de datos D1: npx wrangler d1 create actionq_db
 # 3. Copia el database_id generado y reemplaza "YOUR-D1-DATABASE-ID" abajo
 # 4. ¡Listo! Puedes ejecutar: npm run dev
 #
@@ -25,20 +25,40 @@ compatibility_date = "2026-01-20"
 # ================================================
 # 
 # Para crear tu base de datos ejecuta:
-#   npx wrangler d1 create actionq-db
+#   npx wrangler d1 create actionq_db
 #
 # El comando te dará un output como:
 #   [[d1_databases]]
 #   binding = "DB"
-#   database_name = "actionq-db"
+#   database_name = "actionq_db"
 #   database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 #
 # Copia el database_id y pégalo abajo:
 #
 [[d1_databases]]
 binding = "DB"
-database_name = "actionq-db"
+database_name = "actionq_db"
 database_id = "YOUR-D1-DATABASE-ID"
+
+# ================================================
+# CLOUDFLARE KV (Key-Value Store)
+# ================================================
+# 
+# Para usar KV necesitas crear un namespace:
+#   npx wrangler kv:namespace create "OTP_STORE"
+#   npx wrangler kv:namespace create "OTP_STORE" --preview
+#
+# El comando te dará un binding como este:
+#   [[kv_namespaces]]
+#   binding = "OTP_STORE"
+#   id = "xxxxxxxx"
+#   preview_id = "xxxxxxxx"
+#
+# Descomenta las líneas de abajo y reemplaza los IDs:
+#
+[[kv_namespaces]]
+binding = "ACTIONQ_OTP_STORE"
+id = "YOUR-KV-ID"
 
 # ================================================
 # VARIABLES DE ENTORNO (No sensibles)
@@ -93,7 +113,7 @@ APP_VERSION = "1.0.0"
 # [env.dev]
 # [[env.dev.d1_databases]]
 # binding = "DB"
-# database_name = "actionq-db-dev"
+# database_name = "actionq_db-dev"
 # database_id = "local"
 
 # ================================================
@@ -105,5 +125,5 @@ APP_VERSION = "1.0.0"
 # name = "actionq-prod"
 # [[env.production.d1_databases]]
 # binding = "DB"
-# database_name = "actionq-db-prod"
+# database_name = "actionq_db-prod"
 # database_id = "YOUR-PRODUCTION-D1-DATABASE-ID"

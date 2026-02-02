@@ -45,26 +45,37 @@ const authRoutes = new Hono<AppEnv>();
  * GET /setup - Formulario de configuración inicial (interactivo)
  */
 authRoutes.get('/setup', async (c) => {
-  const db = c.env.DB;
+  try {
+    const db = c.env.DB;
 
-  // Verificar si el setup fue completado
-  const configResult = await db
-    .prepare(
-      "SELECT value FROM system_config WHERE key = 'setup_completed'"
-    )
-    .first();
+    // Verificar si el setup fue completado
+    const configResult = await db
+      .prepare(
+        "SELECT value FROM system_config WHERE key = 'setup_completed'"
+      )
+      .first();
 
-  if (configResult) {
-    // Ya existe admin, redirigir al login
-    return c.redirect('/login');
+    if (configResult) {
+      // Ya existe admin, redirigir al login
+      return c.redirect('/login');
+    }
+
+    // Mostrar página de setup
+    return c.html(
+      <MinimalLayout title="Configuración Inicial">
+        <SetupPage />
+      </MinimalLayout>
+    );
+  } catch (error) {
+    console.error("Error en GET /setup:", error);
+    // Si hay error consultando, mostrar la página de setup igual
+    // (la tabla podría no existir aún)
+    return c.html(
+      <MinimalLayout title="Configuración Inicial">
+        <SetupPage />
+      </MinimalLayout>
+    );
   }
-
-  // Mostrar página de setup
-  return c.html(
-    <MinimalLayout title="Configuración Inicial">
-      <SetupPage />
-    </MinimalLayout>
-  );
 });
 
 /**
@@ -138,24 +149,40 @@ authRoutes.post('/setup', async (c) => {
     const passwordHash = await hashPassword(password, salt);
     const storedHash = `${salt}:${passwordHash}`;
 
+    console.log("Intentando crear tenant:", organization.trim(), slug);
+
     // 1. Crear tenant (organización)
-    const tenantResult = await db
-      .prepare('INSERT INTO tenants (name, slug) VALUES (?, ?) RETURNING id')
+    const tenantInsert = await db
+      .prepare('INSERT INTO tenants (name, slug) VALUES (?, ?)')
       .bind(organization.trim(), slug)
+      .run();
+
+    if (!tenantInsert.success) {
+      throw new Error('No se pudo crear la organización');
+    }
+
+    // Obtener el ID del tenant recién creado
+    const tenantResult = await db
+      .prepare('SELECT id FROM tenants WHERE slug = ?')
+      .bind(slug)
       .first<{ id: number }>();
 
     if (!tenantResult) {
-      throw new Error('No se pudo crear la organización');
+      throw new Error('No se pudo obtener el ID de la organización');
     }
+
+    console.log("Tenant creado con ID:", tenantResult.id);
 
     // 2. Crear usuario admin asociado al tenant
     const result = await db
       .prepare(
         `INSERT INTO users (tenant_id, email, password_hash, name, role, is_active)
-         VALUES (?, ?, ?, ?, ?, 1)`
+         VALUES (?, ?, ?, ?, ?, ?)`
       )
-      .bind(tenantResult.id, email, storedHash, name.trim(), "super_admin")
+      .bind(tenantResult.id, email, storedHash, name.trim(), "super_admin", 1)
       .run();
+
+    console.log("Usuario creado:", result.success);
 
     if (!result.success) {
       throw new Error("No se pudo crear el usuario admin");
@@ -164,9 +191,8 @@ authRoutes.post('/setup', async (c) => {
     // Marcar setup como completado
     await db
       .prepare(
-        `INSERT INTO system_config (key, value) 
-         VALUES ('setup_completed', '1')
-         ON CONFLICT(key) DO UPDATE SET value = '1'`
+        `INSERT OR REPLACE INTO system_config (key, value) 
+         VALUES ('setup_completed', '1')`
       )
       .run();
 
@@ -177,7 +203,8 @@ authRoutes.post('/setup', async (c) => {
       </MinimalLayout>
     );
   } catch (error) {
-    console.error("Error en POST /setup:", error);
+    console.error("Error en POST /setup:", error instanceof Error ? error.message : error);
+    console.error("Stack:", error instanceof Error ? error.stack : "No stack");
     return c.html(
       <MinimalLayout title="Configuración Inicial">
         <SetupPage error="Ocurrió un error creando el administrador. Intenta nuevamente." />

@@ -11,10 +11,10 @@
 -- será aceptado en nuevas operaciones.
 --
 -- Para ejecutar esta migración en desarrollo local:
---   wrangler d1 execute actionq-db --local --file=./src/db/migrations/001_add_agent_admin_role.sql
+--   wrangler d1 execute actionq_db --local --file=./src/db/migrations/001_add_agent_admin_role.sql
 --
 -- Para ejecutar en producción:
---   wrangler d1 execute actionq-db --file=./src/db/migrations/001_add_agent_admin_role.sql
+--   wrangler d1 execute actionq_db --file=./src/db/migrations/001_add_agent_admin_role.sql
 --
 -- ================================================
 
