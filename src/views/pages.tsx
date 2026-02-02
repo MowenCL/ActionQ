@@ -17,7 +17,7 @@ interface SetupPageProps {
 
 export const SetupPage: FC<SetupPageProps> = ({ error }) => {
   return (
-    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4 py-12">
+      <div class="min-h-screen flex items-center justify-center bg-blue-50 px-4 py-12">
       <div class="w-full max-w-md">
         <div class="bg-white rounded-lg shadow-lg p-8">
           <div class="text-center mb-8">
@@ -129,7 +129,7 @@ interface SetupSuccessPageProps {
 
 export const SetupSuccessPage: FC<SetupSuccessPageProps> = ({ name }) => {
   return (
-    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-emerald-100 px-4 py-12">
+    <div class="min-h-screen flex items-center justify-center bg-gray-50 px-4 py-12">
       <div class="w-full max-w-md">
         <div class="bg-white rounded-lg shadow-lg p-8">
           <div class="text-center mb-8">
@@ -261,7 +261,7 @@ export const RegisterPage: FC<RegisterPageProps> = ({
   success, 
   step = 'email',
   email = '',
-  otpRequired = true,
+      <div class="min-h-screen flex items-center justify-center bg-blue-50 px-4 py-12">
   otpResent = false,
   requestsRemaining = 3,
   nextRequestIn = 60
