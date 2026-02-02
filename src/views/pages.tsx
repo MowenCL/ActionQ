@@ -25,8 +25,8 @@ export const SetupPage: FC<SetupPageProps> = ({ error }) => {
             <p class="mt-2 text-gray-600">Instalación Inicial</p>
           </div>
           
-          <p class="text-center text-gray-600 mb-8">
-            Configura tu administrador para comenzar
+          <p class="text-center text-gray-600 mb-6">
+            Configura tu cuenta de administrador
           </p>
           
           {error && (
@@ -35,10 +35,36 @@ export const SetupPage: FC<SetupPageProps> = ({ error }) => {
             </div>
           )}
           
-          <form method="post" action="/setup" class="space-y-6">
+          <form method="post" action="/setup" class="space-y-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-2">
-                Email del Administrador
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Nombre de la Organización
+              </label>
+              <input
+                type="text"
+                name="organization"
+                required
+                placeholder="Mi Empresa S.A."
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Nombre Completo
+              </label>
+              <input
+                type="text"
+                name="name"
+                required
+                placeholder="Juan Pérez"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+            </div>
+            
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Correo Electrónico
               </label>
               <input
                 type="email"
@@ -47,117 +73,15 @@ export const SetupPage: FC<SetupPageProps> = ({ error }) => {
                 placeholder="admin@ejemplo.com"
                 class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
-              <p class="mt-1 text-xs text-gray-500">
-                Este será tu usuario para acceder al sistema
-              </p>
             </div>
             
-            <button
-              type="submit"
-              class="w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-            >
-              Crear Administrador
-            </button>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ================================================
-// PÁGINA DE SETUP EXITOSO (Mostrar credenciales)
-// ================================================
-
-interface SetupSuccessPageProps {
-  email: string;
-  tempPassword: string;
-}
-
-export const SetupSuccessPage: FC<SetupSuccessPageProps> = ({ email, tempPassword }) => {
-  return (
-    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-emerald-100 px-4 py-12">
-      <div class="w-full max-w-md">
-        <div class="bg-white rounded-lg shadow-lg p-8">
-          <div class="text-center mb-8">
-            <div class="text-5xl mb-4">✅</div>
-            <h1 class="text-3xl font-bold text-gray-900">¡Listo!</h1>
-            <p class="mt-2 text-gray-600">Tu administrador fue creado exitosamente</p>
-          </div>
-          
-          <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-8">
-            <p class="text-sm text-gray-700 mb-4">
-              <span class="font-medium">Email:</span>
-            </p>
-            <p class="text-sm font-mono bg-white border border-blue-200 rounded p-3 mb-4 text-center">
-              {email}
-            </p>
-            
-            <p class="text-sm text-gray-700 mb-4">
-              <span class="font-medium">Contraseña temporal:</span>
-            </p>
-            <p class="text-sm font-mono bg-white border border-blue-200 rounded p-3 text-center break-all">
-              {tempPassword}
-            </p>
-          </div>
-          
-          <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-8">
-            <p class="text-sm text-amber-900">
-              <span class="font-bold">⚠️ IMPORTANTE:</span> Esta contraseña es temporal. 
-              Deberás cambiarla en tu primer acceso.
-            </p>
-          </div>
-          
-          <a
-            href="/login"
-            class="block w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors text-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
-          >
-            Ir a Login
-          </a>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ================================================
-// PÁGINA DE CAMBIO FORZADO DE CONTRASEÑA
-// ================================================
-
-interface ForceChangePasswordPageProps {
-  error?: string;
-}
-
-export const ForceChangePasswordPage: FC<ForceChangePasswordPageProps> = ({ error }) => {
-  return (
-    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 px-4 py-12">
-      <div class="w-full max-w-md">
-        <div class="bg-white rounded-lg shadow-lg p-8">
-          <div class="text-center mb-8">
-            <h1 class="text-2xl font-bold text-gray-900">Cambiar Contraseña</h1>
-            <p class="mt-2 text-sm text-gray-600">Primer acceso</p>
-          </div>
-          
-          <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-            <p class="text-sm text-blue-900">
-              Por seguridad, debes cambiar tu contraseña temporal en tu primer acceso.
-            </p>
-          </div>
-          
-          {error && (
-            <div class="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-              <p class="text-sm text-red-800 font-medium">⚠️ {error}</p>
-            </div>
-          )}
-          
-          <form method="post" action="/force-change-password" class="space-y-6">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-2">
-                Nueva Contraseña
+              <label class="block text-sm font-medium text-gray-700 mb-1">
+                Contraseña
               </label>
               <input
                 type="password"
-                name="new_password"
+                name="password"
                 required
                 minLength={8}
                 placeholder="Mín. 8 caracteres"
@@ -169,7 +93,7 @@ export const ForceChangePasswordPage: FC<ForceChangePasswordPageProps> = ({ erro
             </div>
             
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-2">
+              <label class="block text-sm font-medium text-gray-700 mb-1">
                 Confirmar Contraseña
               </label>
               <input
@@ -184,11 +108,51 @@ export const ForceChangePasswordPage: FC<ForceChangePasswordPageProps> = ({ erro
             
             <button
               type="submit"
-              class="w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+              class="w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 mt-6"
             >
-              Cambiar Contraseña
+              Crear Cuenta de Administrador
             </button>
           </form>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ================================================
+// PÁGINA DE SETUP EXITOSO (Mostrar credenciales)
+// ================================================
+
+interface SetupSuccessPageProps {
+  name: string;
+}
+
+export const SetupSuccessPage: FC<SetupSuccessPageProps> = ({ name }) => {
+  return (
+    <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-emerald-100 px-4 py-12">
+      <div class="w-full max-w-md">
+        <div class="bg-white rounded-lg shadow-lg p-8">
+          <div class="text-center mb-8">
+            <div class="text-5xl mb-4">✅</div>
+            <h1 class="text-3xl font-bold text-gray-900">¡Bienvenido!</h1>
+            <p class="mt-2 text-gray-600">Tu cuenta fue creada exitosamente</p>
+          </div>
+          
+          <div class="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-8 text-center">
+            <p class="text-lg text-gray-800">
+              Hola, <span class="font-semibold">{name}</span>
+            </p>
+            <p class="text-sm text-gray-600 mt-2">
+              Ya puedes acceder al sistema con tus credenciales.
+            </p>
+          </div>
+          
+          <a
+            href="/login"
+            class="block w-full py-2 px-4 bg-blue-600 text-white font-medium rounded-lg hover:bg-blue-700 transition-colors text-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            Iniciar Sesión
+          </a>
         </div>
       </div>
     </div>

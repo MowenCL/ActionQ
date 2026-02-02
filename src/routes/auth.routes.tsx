@@ -7,7 +7,7 @@
 import { Hono } from 'hono';
 import type { AppEnv, SessionUser, User } from '../types';
 import { Layout, MinimalLayout } from '../views/Layout';
-import { SetupPage, LoginPage, RegisterPage, ResetPasswordPage, SetupSuccessPage, ForceChangePasswordPage } from '../views/pages';
+import { SetupPage, LoginPage, RegisterPage, ResetPasswordPage, SetupSuccessPage } from '../views/pages';
 import { 
   requireAuth,
   setSessionCookie, 
@@ -34,10 +34,6 @@ import {
   createOTP,
   validateOTP
 } from '../services/otp.service';
-import {
-  generateSecurePassword,
-  isSecurePassword
-} from '../utils/password-generator';
 
 const authRoutes = new Hono<AppEnv>();
 
@@ -72,38 +68,93 @@ authRoutes.get('/setup', async (c) => {
 });
 
 /**
- * POST /setup - Crea el usuario administrador con email y contraseña temporal generada
+ * POST /setup - Crea el usuario administrador con los datos del formulario
  */
 authRoutes.post('/setup', async (c) => {
   try {
     const db = c.env.DB;
     const formData = await c.req.formData();
+    const organization = formData.get('organization') as string;
+    const name = formData.get('name') as string;
     const email = formData.get('email') as string;
+    const password = formData.get('password') as string;
+    const confirmPassword = formData.get('confirm_password') as string;
+
+    // Validar organización
+    if (!organization || organization.trim().length < 2) {
+      return c.html(
+        <MinimalLayout title="Configuración Inicial">
+          <SetupPage error="Por favor proporciona un nombre de organización válido" />
+        </MinimalLayout>
+      );
+    }
+
+    // Validar nombre
+    if (!name || name.trim().length < 2) {
+      return c.html(
+        <MinimalLayout title="Configuración Inicial">
+          <SetupPage error="Por favor proporciona un nombre válido" />
+        </MinimalLayout>
+      );
+    }
 
     // Validar email
     if (!email || !email.includes('@')) {
       return c.html(
         <MinimalLayout title="Configuración Inicial">
-          <SetupPage error="Por favor proporciona un email válido" />
+          <SetupPage error="Por favor proporciona un correo electrónico válido" />
         </MinimalLayout>
       );
     }
 
-    // Generar contraseña temporal segura (16 caracteres)
-    const tempPassword = generateSecurePassword(16);
+    // Validar que las contraseñas coincidan
+    if (password !== confirmPassword) {
+      return c.html(
+        <MinimalLayout title="Configuración Inicial">
+          <SetupPage error="Las contraseñas no coinciden" />
+        </MinimalLayout>
+      );
+    }
+
+    // Validar longitud mínima de contraseña
+    if (password.length < 8) {
+      return c.html(
+        <MinimalLayout title="Configuración Inicial">
+          <SetupPage error="La contraseña debe tener al menos 8 caracteres" />
+        </MinimalLayout>
+      );
+    }
+
+    // Crear slug para la organización
+    const slug = organization
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-|-$/g, '');
 
     // Hash de la contraseña
     const salt = generateSalt();
-    const passwordHash = await hashPassword(tempPassword, salt);
+    const passwordHash = await hashPassword(password, salt);
     const storedHash = `${salt}:${passwordHash}`;
 
-    // Crear usuario admin en la BD
+    // 1. Crear tenant (organización)
+    const tenantResult = await db
+      .prepare('INSERT INTO tenants (name, slug) VALUES (?, ?) RETURNING id')
+      .bind(organization.trim(), slug)
+      .first<{ id: number }>();
+
+    if (!tenantResult) {
+      throw new Error('No se pudo crear la organización');
+    }
+
+    // 2. Crear usuario admin asociado al tenant
     const result = await db
       .prepare(
-        `INSERT INTO users (email, password_hash, role, is_active, must_change_password)
-         VALUES (?, ?, ?, 1, 1)`
+        `INSERT INTO users (tenant_id, email, password_hash, name, role, is_active)
+         VALUES (?, ?, ?, ?, ?, 1)`
       )
-      .bind(email, storedHash, "admin")
+      .bind(tenantResult.id, email, storedHash, name.trim(), "super_admin")
       .run();
 
     if (!result.success) {
@@ -119,10 +170,10 @@ authRoutes.post('/setup', async (c) => {
       )
       .run();
 
-    // Mostrar página de éxito con credenciales
+    // Mostrar página de éxito
     return c.html(
       <MinimalLayout title="Configuración Completada">
-        <SetupSuccessPage email={email} tempPassword={tempPassword} />
+        <SetupSuccessPage name={name.trim()} />
       </MinimalLayout>
     );
   } catch (error) {
@@ -888,92 +939,6 @@ authRoutes.get('/register', (c) => {
       <RegisterPage />
     </MinimalLayout>
   );
-});
-
-/**
- * GET /force-change-password - Página para cambiar contraseña temporal
- */
-authRoutes.get('/force-change-password', requireAuth, async (c) => {
-  const user = c.get('user') as SessionUser;
-  
-  // Si el usuario no tiene el flag de cambio obligatorio, redirigir al dashboard
-  if (!user.must_change_password) {
-    return c.redirect('/dashboard');
-  }
-  
-  return c.html(
-    <MinimalLayout title="Cambiar Contraseña">
-      <ForceChangePasswordPage />
-    </MinimalLayout>
-  );
-});
-
-/**
- * POST /force-change-password - Procesar cambio de contraseña
- */
-authRoutes.post('/force-change-password', requireAuth, async (c) => {
-  try {
-    const user = c.get('user') as SessionUser;
-    
-    // Verificar que el usuario está autenticado
-    if (!user || !user.id) {
-      return c.redirect('/login');
-    }
-
-    const db = c.env.DB;
-    const formData = await c.req.formData();
-    const newPassword = formData.get('new_password') as string;
-    const confirmPassword = formData.get('confirm_password') as string;
-
-    // Validar que ambas contraseñas coincidan
-    if (newPassword !== confirmPassword) {
-      return c.html(
-        <MinimalLayout title="Cambiar Contraseña">
-          <ForceChangePasswordPage error="Las contraseñas no coinciden" />
-        </MinimalLayout>
-      );
-    }
-
-    // Validar que la contraseña sea segura
-    const validation = isSecurePassword(newPassword);
-    if (!validation.valid) {
-      const errorMsg = validation.errors.join(", ");
-      return c.html(
-        <MinimalLayout title="Cambiar Contraseña">
-          <ForceChangePasswordPage error={`Contraseña no válida: ${errorMsg}`} />
-        </MinimalLayout>
-      );
-    }
-
-    // Hash de la nueva contraseña
-    const salt = generateSalt();
-    const passwordHash = await hashPassword(newPassword, salt);
-    const storedHash = `${salt}:${passwordHash}`;
-
-    // Actualizar la contraseña y limpiar el flag must_change_password
-    const result = await db
-      .prepare(
-        `UPDATE users 
-         SET password_hash = ?, must_change_password = 0, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?`
-      )
-      .bind(storedHash, user.id)
-      .run();
-
-    if (!result.success) {
-      throw new Error("No se pudo actualizar la contraseña");
-    }
-
-    // Redirigir al dashboard
-    return c.redirect('/dashboard?password_changed=true');
-  } catch (error) {
-    console.error("Error en POST /force-change-password:", error);
-    return c.html(
-      <MinimalLayout title="Cambiar Contraseña">
-        <ForceChangePasswordPage error="Ocurrió un error. Intenta nuevamente." />
-      </MinimalLayout>
-    );
-  }
 });
 
 /**

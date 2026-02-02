@@ -2076,7 +2076,9 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
                     <input 
                       type="checkbox" 
                       name="email_enabled"
+                      id="email_enabled_toggle"
                       value="true"
+                      onchange="document.getElementById('email-provider-section')?.classList.toggle('hidden', !this.checked)"
                       class="sr-only peer"
                       checked={emailEnabled}
                       disabled={!isEmailConfigured}
@@ -2092,8 +2094,11 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
                 )}
                 
                 {/* Selector de Proveedor de Correo */}
-                {emailEnabled && isEmailConfigured && (
-                  <div class="space-y-4">
+                {isEmailConfigured && (
+                  <div
+                    id="email-provider-section"
+                    class={`space-y-4 ${emailEnabled ? 'block' : 'hidden'}`}
+                  >
                     <div>
                       <label class="block text-sm font-medium text-gray-700 mb-2">
                         📨 Proveedor de Correo
@@ -2139,13 +2144,12 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
                     )}
                   </div>
                 )}
+
+
               </div>
             </div>
           </div>
         </form>
-        
-        {/* Espacio para la barra fija */}
-        <div class="h-24"></div>
         
         {/* Prueba de Correo Electrónico */}
         {isEmailConfigured && (
@@ -2258,6 +2262,9 @@ adminRoutes.get('/admin/settings', requireAdmin, async (c) => {
             </dl>
           </div>
         </div>
+
+        {/* Espacio para la barra fija */}
+        <div class="h-24"></div>
       </div>
       
       {/* Barra de guardar fija al final */}

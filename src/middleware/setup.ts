@@ -17,10 +17,10 @@ import type { AppEnv } from '../types';
 export async function isSystemInstalled(db: D1Database): Promise<boolean> {
   try {
     const result = await db
-      .prepare("SELECT value FROM system_config WHERE key = 'setup_complete'")
+      .prepare("SELECT value FROM system_config WHERE key = 'setup_completed'")
       .first<{ value: string }>();
     
-    return result?.value === 'true';
+    return result?.value === '1';
   } catch {
     // La tabla puede no existir todavía
     return false;
@@ -32,7 +32,7 @@ export async function isSystemInstalled(db: D1Database): Promise<boolean> {
  */
 export async function markSystemAsInstalled(db: D1Database): Promise<void> {
   await db
-    .prepare("INSERT OR REPLACE INTO system_config (key, value) VALUES ('setup_complete', 'true')")
+    .prepare("INSERT OR REPLACE INTO system_config (key, value) VALUES ('setup_completed', '1')")
     .run();
 }
 

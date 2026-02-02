@@ -25,7 +25,6 @@ import {
   generateSalt
 } from './middleware/auth';
 import { setupCheckMiddleware } from './middleware/setup';
-import { forcePasswordChangeMiddleware } from './middleware/force-password-change';
 
 // Utilidades y constantes extraídas
 import { formatDate } from './utils';
@@ -90,9 +89,6 @@ app.use('*', async (c, next) => {
 
 // Verificar instalación (redirige a /setup si no está configurado)
 app.use('*', setupCheckMiddleware);
-
-// Forzar cambio de contraseña para nuevos usuarios
-app.use('*', forcePasswordChangeMiddleware);
 
 // ================================================
 // RUTAS PÚBLICAS
